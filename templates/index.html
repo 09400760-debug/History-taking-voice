@@ -66,10 +66,10 @@
   <h1>Realtime Voice History-Taking</h1>
   <p class="small">This page runs the live caregiver interview.</p>
 
-  <div id="status">Not connected</div>
+  <div id="status">Preparing session...</div>
 
   <div style="margin-top:20px;">
-    <button id="startBtn">Start Voice Session</button>
+    <button id="startBtn" disabled>Start Voice Session</button>
     <button id="stopBtn" disabled>Stop Session</button>
   </div>
 
@@ -79,7 +79,7 @@
   </div>
 
   <div id="warningSection">
-    <p><strong>Session stopped before completion.</strong> You can start again or return to the main app.</p>
+    <p><strong>Session stopped before completion.</strong> You can return to the main app.</p>
     <a id="manualReturnBtn" class="button-link" href="#">Return to main app</a>
   </div>
 
@@ -97,6 +97,7 @@
     let transcriptLines = [];
     let transcriptSaved = false;
     let stopInProgress = false;
+    let autoStarted = false;
 
     const statusEl = document.getElementById("status");
     const transcriptEl = document.getElementById("transcript");
@@ -267,18 +268,26 @@
       }
 
       remoteAudioEl.srcObject = null;
-      startBtn.disabled = false;
+      startBtn.disabled = true;
       stopBtn.disabled = true;
     }
 
-    async function markSessionComplete() {
+    async function completeAndReturn() {
       sessionFinished = true;
-      statusEl.textContent = "Session complete. Click Stop Session to return to the main app.";
+      statusEl.textContent = "Session complete. Saving transcript and returning...";
       await saveTranscriptToServer();
+      await tearDownSession();
       showReturnSection();
+
+      if (RETURN_URL) {
+        window.location.href = RETURN_URL;
+      }
     }
 
     async function startSession() {
+      if (autoStarted) return;
+      autoStarted = true;
+
       try {
         resetUiForNewSession();
         statusEl.textContent = "Accessing microphone...";
@@ -365,7 +374,7 @@
               }
 
               if (isFinalLine(botText)) {
-                await markSessionComplete();
+                await completeAndReturn();
                 return;
               }
 
@@ -451,12 +460,10 @@
 
       if (sessionFinished) {
         statusEl.textContent = "Session complete";
-
         if (RETURN_URL) {
           window.location.href = RETURN_URL;
           return;
         }
-
         showReturnSection();
       } else {
         statusEl.textContent = "Session stopped before completion";
@@ -466,8 +473,13 @@
       stopInProgress = false;
     }
 
-    startBtn.addEventListener("click", startSession);
     stopBtn.addEventListener("click", stopSession);
+
+    window.addEventListener("load", () => {
+      setTimeout(() => {
+        startSession();
+      }, 700);
+    });
   </script>
 </body>
 </html>
