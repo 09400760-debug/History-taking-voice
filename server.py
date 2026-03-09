@@ -4,7 +4,6 @@ from fastapi.templating import Jinja2Templates
 import httpx
 import os
 import json
-import uuid
 from pathlib import Path
 
 app = FastAPI()
@@ -26,19 +25,19 @@ async def save_transcript(request: Request):
     try:
         body = await request.json()
 
-        session_id = str(body.get("session_id", "")).strip() or str(uuid.uuid4())
+        session_id = str(body.get("session_id", "")).strip()
         safe_id = "".join(c for c in session_id if c.isalnum() or c in "-_")
 
         if not safe_id:
-            safe_id = str(uuid.uuid4())
+            return JSONResponse(
+                {"status": "error", "message": "Missing session_id"},
+                status_code=400,
+            )
 
         transcript_file = TRANSCRIPTS_DIR / f"transcript_{safe_id}.json"
 
         with open(transcript_file, "w", encoding="utf-8") as f:
             json.dump(body, f, ensure_ascii=False, indent=2)
-
-        latest_pointer = TRANSCRIPTS_DIR / "latest_session_id.txt"
-        latest_pointer.write_text(safe_id, encoding="utf-8")
 
         return JSONResponse({"status": "ok", "session_id": safe_id})
 
@@ -53,32 +52,19 @@ async def save_transcript(request: Request):
 @app.get("/latest_transcript")
 async def latest_transcript(session_id: str | None = None):
     try:
-        target_session_id = None
+        if not session_id:
+            return JSONResponse(
+                {"status": "error", "message": "session_id is required"},
+                status_code=400,
+            )
 
-        if session_id:
-            target_session_id = "".join(c for c in session_id if c.isalnum() or c in "-_")
-        else:
-            latest_pointer = TRANSCRIPTS_DIR / "latest_session_id.txt"
-            if latest_pointer.exists():
-                target_session_id = latest_pointer.read_text(encoding="utf-8").strip()
+        safe_id = "".join(c for c in str(session_id) if c.isalnum() or c in "-_")
+        transcript_file = TRANSCRIPTS_DIR / f"transcript_{safe_id}.json"
 
-        if target_session_id:
-            transcript_file = TRANSCRIPTS_DIR / f"transcript_{target_session_id}.json"
-            if transcript_file.exists():
-                with open(transcript_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                return JSONResponse({"status": "ok", "data": data})
-
-        files = sorted(
-            TRANSCRIPTS_DIR.glob("transcript_*.json"),
-            key=lambda f: f.stat().st_mtime,
-            reverse=True,
-        )
-
-        if not files:
+        if not transcript_file.exists():
             return JSONResponse({"status": "missing"}, status_code=404)
 
-        with open(files[0], "r", encoding="utf-8") as f:
+        with open(transcript_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
         return JSONResponse({"status": "ok", "data": data})
@@ -105,8 +91,8 @@ async def create_session(request: Request):
         case_summary = request.query_params.get("case_summary", "").strip()
         opening_line = request.query_params.get(
             "opening_line",
-            "Hello, who am I speaking to?"
-        ).strip() or "Hello, who am I speaking to?"
+            f"Hello doctor, I'm {caregiver_name}."
+        ).strip() or f"Hello doctor, I'm {caregiver_name}."
 
         instructions = f"""
 You are simulating a realistic paediatric history-taking station for a 5th-year undergraduate medical student at the University of the Witwatersrand, Johannesburg, South Africa.
@@ -138,8 +124,10 @@ Core opening rules:
   "{opening_line}"
 - Do not repeat the opening line.
 - After that first opening line, wait for the learner to speak.
-- If the learner only says a greeting such as "hello", "good morning", "good afternoon", or introduces themselves, respond ONLY with a brief greeting and your name, for example:
-  "Hello doctor, I'm {caregiver_name}."
+- If the learner greets you after your opening line, acknowledge briefly and politely, for example:
+  "Good morning."
+  or
+  "Hello doctor."
 - After that, wait.
 - Do NOT give the presenting complaint unless the learner asks an opening clinical question such as:
   "What brought you in today?"
@@ -147,6 +135,7 @@ Core opening rules:
   "Why did you come today?"
   "How can I help you today?"
 - Greeting alone is NOT permission to give the complaint.
+- If the learner introduces themselves after your opening line, acknowledge briefly and wait.
 
 English-only rules:
 - The interaction must stay in English.
@@ -171,8 +160,7 @@ General caregiver rules:
 
 Critical turn-taking rules:
 - If the learner's utterance sounds incomplete, cut off, partial, or interrupted, wait and do not answer yet.
-- If the learner is still introducing themselves, wait for the full introduction before replying.
-- Do not respond to a partial name or partial sentence.
+- Do not respond to a partial sentence.
 - Prefer waiting over interrupting.
 
 Critical name rules:
@@ -184,8 +172,6 @@ Critical name rules:
 - If the learner explicitly says your name is wrong, respond only:
   "I'm {caregiver_name}."
 - After that, wait.
-- If the learner says "My name is Ashraf" or repeats their own name, that refers to the learner, not to you.
-- It is acceptable to acknowledge the learner briefly by name once during the introduction, but do not overuse the learner's name.
 
 Important rule for broad opening questions:
 - If the learner asks broad opening questions such as:
@@ -198,10 +184,10 @@ Important rule for broad opening questions:
 - Do NOT ask for clarification for those questions.
 
 Examples of good behaviour:
-- Learner: "Good morning, I am Ashraf, a student doctor."
-  Caregiver: "Hello, Ashraf, I'm {caregiver_name}."
 - Learner: "Good morning."
-  Caregiver: "Hello doctor, I'm {caregiver_name}."
+  Caregiver: "Good morning."
+- Learner: "I am Ashraf, a student doctor."
+  Caregiver: "Hello doctor."
 - Learner: "What brought you in today?"
   Caregiver: answer with the main complaint briefly.
 - Learner: "What seems to be the problem?"
@@ -215,7 +201,6 @@ Examples of bad behaviour:
 - Do not say: "What brings you and your baby here today?"
 - Do not say: "How can I help you?"
 - Do not say: "Could you tell me a bit about what's going on?"
-- Do not say: "Okay, I'm Ashraf."
 - Do not behave like a receptionist, nurse, doctor, or assistant.
 - Do not ask follow-up clinical questions unless the learner's question is genuinely unclear.
 
