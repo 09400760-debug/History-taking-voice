@@ -4,13 +4,16 @@ from fastapi.templating import Jinja2Templates
 import httpx
 import os
 import json
+import uuid
 from pathlib import Path
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
-TRANSCRIPT_FILE = Path("voice_transcript_latest.json")
+
+TRANSCRIPTS_DIR = Path("transcripts")
+TRANSCRIPTS_DIR.mkdir(exist_ok=True)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -22,22 +25,70 @@ async def home(request: Request):
 async def save_transcript(request: Request):
     try:
         body = await request.json()
-        with open(TRANSCRIPT_FILE, "w", encoding="utf-8") as f:
+
+        session_id = str(body.get("session_id", "")).strip() or str(uuid.uuid4())
+        safe_id = "".join(c for c in session_id if c.isalnum() or c in "-_")
+
+        if not safe_id:
+            safe_id = str(uuid.uuid4())
+
+        transcript_file = TRANSCRIPTS_DIR / f"transcript_{safe_id}.json"
+
+        with open(transcript_file, "w", encoding="utf-8") as f:
             json.dump(body, f, ensure_ascii=False, indent=2)
-        return JSONResponse({"status": "ok"})
+
+        latest_pointer = TRANSCRIPTS_DIR / "latest_session_id.txt"
+        latest_pointer.write_text(safe_id, encoding="utf-8")
+
+        return JSONResponse({"status": "ok", "session_id": safe_id})
+
     except Exception as e:
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+        print(f"save_transcript error: {e}")
+        return JSONResponse(
+            {"status": "error", "message": "Could not save transcript"},
+            status_code=500,
+        )
 
 
 @app.get("/latest_transcript")
-async def latest_transcript():
-    if not TRANSCRIPT_FILE.exists():
-        return JSONResponse({"status": "missing"}, status_code=404)
+async def latest_transcript(session_id: str | None = None):
+    try:
+        target_session_id = None
 
-    with open(TRANSCRIPT_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        if session_id:
+            target_session_id = "".join(c for c in session_id if c.isalnum() or c in "-_")
+        else:
+            latest_pointer = TRANSCRIPTS_DIR / "latest_session_id.txt"
+            if latest_pointer.exists():
+                target_session_id = latest_pointer.read_text(encoding="utf-8").strip()
 
-    return JSONResponse({"status": "ok", "data": data})
+        if target_session_id:
+            transcript_file = TRANSCRIPTS_DIR / f"transcript_{target_session_id}.json"
+            if transcript_file.exists():
+                with open(transcript_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return JSONResponse({"status": "ok", "data": data})
+
+        files = sorted(
+            TRANSCRIPTS_DIR.glob("transcript_*.json"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+
+        if not files:
+            return JSONResponse({"status": "missing"}, status_code=404)
+
+        with open(files[0], "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        return JSONResponse({"status": "ok", "data": data})
+
+    except Exception as e:
+        print(f"latest_transcript error: {e}")
+        return JSONResponse(
+            {"status": "error", "message": "Could not load transcript"},
+            status_code=500,
+        )
 
 
 @app.post("/session")
@@ -48,14 +99,14 @@ async def create_session(request: Request):
 
         age_group = request.query_params.get("age_group", "Infant")
         system = request.query_params.get("system", "Respiratory")
-        caregiver_name = request.query_params.get("caregiver_name", "Lindiwe")
-        child_name = request.query_params.get("child_name", "the child")
-        presenting_complaint = request.query_params.get("presenting_complaint", "")
-        case_summary = request.query_params.get("case_summary", "")
+        caregiver_name = request.query_params.get("caregiver_name", "Lindiwe").strip() or "Lindiwe"
+        child_name = request.query_params.get("child_name", "").strip() or "the child"
+        presenting_complaint = request.query_params.get("presenting_complaint", "").strip()
+        case_summary = request.query_params.get("case_summary", "").strip()
         opening_line = request.query_params.get(
             "opening_line",
             "Hello, who am I speaking to?"
-        )
+        ).strip() or "Hello, who am I speaking to?"
 
         instructions = f"""
 You are simulating a realistic paediatric history-taking station for a 5th-year undergraduate medical student at the University of the Witwatersrand, Johannesburg, South Africa.
@@ -87,16 +138,15 @@ Core opening rules:
   "{opening_line}"
 - Do not repeat the opening line.
 - After that first opening line, wait for the learner to speak.
-- Do not jump straight into the complaint unless the learner asks for it.
-- If the learner says hello, good morning, good afternoon, or introduces themselves, acknowledge naturally and briefly.
-- After the learner introduces themselves, respond with a short greeting and your own name.
-- Use your own name exactly as:
-  "{caregiver_name}"
-- Examples:
-  "Hello, I'm {caregiver_name}."
-  or "Hello doctor, I'm {caregiver_name}."
+- If the learner only says a greeting such as "hello", "good morning", "good afternoon", or introduces themselves, respond ONLY with a brief greeting and your name, for example:
+  "Hello doctor, I'm {caregiver_name}."
 - After that, wait.
-- Do not ask a follow-up question after the learner introduces themselves.
+- Do NOT give the presenting complaint unless the learner asks an opening clinical question such as:
+  "What brought you in today?"
+  "What seems to be the problem?"
+  "Why did you come today?"
+  "How can I help you today?"
+- Greeting alone is NOT permission to give the complaint.
 
 English-only rules:
 - The interaction must stay in English.
@@ -143,12 +193,15 @@ Important rule for broad opening questions:
   "What brings you to hospital?"
   "What seems to be the problem?"
   "Why did you come today?"
+  "How can I help you today?"
   then answer with the main complaint briefly and directly.
 - Do NOT ask for clarification for those questions.
 
 Examples of good behaviour:
 - Learner: "Good morning, I am Ashraf, a student doctor."
   Caregiver: "Hello, Ashraf, I'm {caregiver_name}."
+- Learner: "Good morning."
+  Caregiver: "Hello doctor, I'm {caregiver_name}."
 - Learner: "What brought you in today?"
   Caregiver: answer with the main complaint briefly.
 - Learner: "What seems to be the problem?"
@@ -187,7 +240,7 @@ Preceptor mode must also stay in English:
 
 After the learner answers in preceptor mode:
 - Respond ONLY with:
-  "Thank you. Please go back to the Streamlit app and click 'Import latest voice transcript'."
+  "Thank you. Please click stop session. You will then be taken back automatically for feedback and scoring."
 - Do not ask any more questions.
 - Do not give feedback.
 - Do not tutor.
@@ -241,10 +294,11 @@ If the learner says no to preceptor mode:
             )
 
         if not (200 <= r.status_code < 300):
+            print(f"OpenAI error {r.status_code}: {r.text}")
             return Response(
-                content=f"OpenAI error {r.status_code}: {r.text}",
+                content="Failed to establish realtime session. Please try again.",
                 media_type="text/plain",
-                status_code=500,
+                status_code=502,
             )
 
         return Response(
@@ -254,8 +308,9 @@ If the learner says no to preceptor mode:
         )
 
     except Exception as e:
+        print(f"Session exception: {e}")
         return Response(
-            content=f"Server exception: {str(e)}",
+            content="An internal error occurred. Please try again.",
             media_type="text/plain",
             status_code=500,
         )
