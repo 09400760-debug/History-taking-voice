@@ -46,21 +46,19 @@
       color: #666;
       font-size: 14px;
     }
-    #returnSection {
+    #returnSection, #warningSection {
       display: none;
       margin-top: 20px;
       padding: 16px;
-      border: 1px solid #d9d9d9;
-      background: #f9f9f9;
       border-radius: 8px;
     }
+    #returnSection {
+      border: 1px solid #d9d9d9;
+      background: #f9f9f9;
+    }
     #warningSection {
-      display: none;
-      margin-top: 20px;
-      padding: 16px;
       border: 1px solid #e0b4b4;
       background: #fff6f6;
-      border-radius: 8px;
     }
   </style>
 </head>
@@ -130,6 +128,8 @@
         .replace(/\s+/g, " ");
     }
 
+    const SESSION_ID = getQueryParam("session_id", "");
+
     function buildSafeReturnUrl() {
       const rawReturnUrl = getQueryParam("return_url", "");
       if (!rawReturnUrl) return "";
@@ -141,6 +141,9 @@
           return "";
         }
         url.searchParams.set("import_voice", "1");
+        if (SESSION_ID) {
+          url.searchParams.set("session_id", SESSION_ID);
+        }
         return url.toString();
       } catch (err) {
         console.warn("Invalid return_url:", rawReturnUrl, err);
@@ -177,6 +180,7 @@
 
       try {
         const payload = {
+          session_id: SESSION_ID,
           transcript_lines: transcriptLines,
           transcript_text: transcriptLines.map(x => `${x.speaker}: ${x.text}`).join("\n")
         };
@@ -255,13 +259,10 @@
       stopBtn.disabled = true;
     }
 
-    async function finishSessionAndPrepareReturn() {
+    async function markSessionComplete() {
       sessionFinished = true;
-      statusEl.textContent = "Session complete";
-
+      statusEl.textContent = "Session complete. Click Stop Session to return to the main app.";
       await saveTranscriptToServer();
-      await tearDownSession();
-
       showReturnSection();
     }
 
@@ -276,7 +277,7 @@
         const child_name = getQueryParam("child_name", "");
         const presenting_complaint = getQueryParam("presenting_complaint", "");
         const case_summary = getQueryParam("case_summary", "");
-        const opening_line = getQueryParam("opening_line", "Hello, who am I speaking to?");
+        const opening_line = getQueryParam("opening_line", `Hello doctor, I'm ${caregiver_name}.`);
         const normalizedOpeningLine = normalizeText(opening_line);
 
         pc = new RTCPeerConnection();
@@ -286,7 +287,7 @@
         };
 
         pc.onconnectionstatechange = () => {
-          if (!sessionFinished && !stopInProgress) {
+          if (!sessionFinished && !stopInProgress && pc) {
             statusEl.textContent = `Connection state: ${pc.connectionState}`;
           }
         };
@@ -345,7 +346,7 @@
               }
 
               if (isExactFinalLine(botText)) {
-                await finishSessionAndPrepareReturn();
+                await markSessionComplete();
                 return;
               }
 
@@ -387,7 +388,8 @@
           child_name,
           presenting_complaint,
           case_summary,
-          opening_line
+          opening_line,
+          session_id: SESSION_ID
         }).toString();
 
         const sdpResponse = await fetch(`/session?${query}`, {
@@ -430,11 +432,13 @@
 
       if (sessionFinished) {
         statusEl.textContent = "Session complete";
-        showReturnSection();
 
         if (RETURN_URL) {
           window.location.href = RETURN_URL;
+          return;
         }
+
+        showReturnSection();
       } else {
         statusEl.textContent = "Session stopped before completion";
         showIncompleteWarning();
