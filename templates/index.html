@@ -74,7 +74,7 @@
   </div>
 
   <div id="returnSection">
-    <p><strong>Session complete.</strong> Returning to the main app for feedback and scoring.</p>
+    <p><strong>Session complete.</strong> Returning to the main app.</p>
     <a id="returnBtn" class="button-link" href="#">Return to main app</a>
   </div>
 
@@ -98,6 +98,8 @@
     let transcriptSaved = false;
     let stopInProgress = false;
     let autoStarted = false;
+    let finalChoiceAsked = false;
+    let pendingAutoFeedback = "0";
 
     const statusEl = document.getElementById("status");
     const transcriptEl = document.getElementById("transcript");
@@ -113,11 +115,17 @@
       "https://history-takinggit-eexzk8appdm3vzfej2vtuzn.streamlit.app"
     ];
 
-    const FINAL_LINE_NEW =
-      "Thank you. Please click stop session. You will then be taken back automatically for feedback and scoring.";
+    const FINAL_FEEDBACK_QUESTION =
+      "Would you like to get your assessment and feedback now?";
 
-    const FINAL_LINE_OLD =
-      'Thank you. Please go back to the Streamlit app and click "Import latest voice transcript."';
+    const FINAL_STOP_YES =
+      "Thank you. Please click stop session now.";
+
+    const FINAL_STOP_NO =
+      "Okay. Please click stop session now.";
+
+    const LEGACY_FINAL_LINE =
+      "Thank you. Please click stop session. You will then be taken back automatically for feedback and scoring.";
 
     function getQueryParam(name, fallback = "") {
       const params = new URLSearchParams(window.location.search);
@@ -134,7 +142,7 @@
 
     const SESSION_ID = getQueryParam("session_id", "");
 
-    function buildSafeReturnUrl() {
+    function buildSafeReturnUrl(autoFeedback = "0") {
       const rawReturnUrl = getQueryParam("return_url", "");
       if (!rawReturnUrl) return "";
 
@@ -145,6 +153,7 @@
           return "";
         }
         url.searchParams.set("import_voice", "1");
+        url.searchParams.set("auto_feedback", autoFeedback);
         if (SESSION_ID) {
           url.searchParams.set("session_id", SESSION_ID);
         }
@@ -155,15 +164,20 @@
       }
     }
 
-    const RETURN_URL = buildSafeReturnUrl();
-
-    if (RETURN_URL) {
-      returnBtn.href = RETURN_URL;
-      manualReturnBtn.href = RETURN_URL;
-    } else {
-      returnBtn.style.display = "none";
-      manualReturnBtn.style.display = "none";
+    function setReturnLinks(autoFeedback = "0") {
+      const url = buildSafeReturnUrl(autoFeedback);
+      if (url) {
+        returnBtn.href = url;
+        manualReturnBtn.href = url;
+        returnBtn.style.display = "inline-block";
+        manualReturnBtn.style.display = "inline-block";
+      } else {
+        returnBtn.style.display = "none";
+        manualReturnBtn.style.display = "none";
+      }
     }
+
+    setReturnLinks("0");
 
     function appendTranscriptLineToDOM(speaker, text) {
       const line = document.createElement("div");
@@ -221,10 +235,13 @@
       transcriptLines = [];
       transcriptSaved = false;
       stopInProgress = false;
+      finalChoiceAsked = false;
+      pendingAutoFeedback = "0";
 
       transcriptEl.innerHTML = "";
       returnSection.style.display = "none";
       warningSection.style.display = "none";
+      setReturnLinks("0");
     }
 
     function showReturnSection() {
@@ -237,12 +254,20 @@
       returnSection.style.display = "none";
     }
 
-    function isFinalLine(botText) {
-      const normalized = normalizeText(botText);
-      return (
-        normalized === normalizeText(FINAL_LINE_NEW) ||
-        normalized === normalizeText(FINAL_LINE_OLD)
-      );
+    function isFeedbackQuestion(botText) {
+      return normalizeText(botText) === normalizeText(FINAL_FEEDBACK_QUESTION);
+    }
+
+    function isFinalStopYes(botText) {
+      return normalizeText(botText) === normalizeText(FINAL_STOP_YES);
+    }
+
+    function isFinalStopNo(botText) {
+      return normalizeText(botText) === normalizeText(FINAL_STOP_NO);
+    }
+
+    function isLegacyFinalLine(botText) {
+      return normalizeText(botText) === normalizeText(LEGACY_FINAL_LINE);
     }
 
     async function tearDownSession() {
@@ -272,15 +297,22 @@
       stopBtn.disabled = true;
     }
 
-    async function completeAndReturn() {
+    async function completeAndReturn(autoFeedback = "0") {
       sessionFinished = true;
-      statusEl.textContent = "Session complete. Saving transcript and returning...";
+      pendingAutoFeedback = autoFeedback;
+      setReturnLinks(autoFeedback);
+
+      statusEl.textContent = autoFeedback === "1"
+        ? "Session complete. Saving transcript and returning for feedback..."
+        : "Session complete. Saving transcript and returning...";
+
       await saveTranscriptToServer();
       await tearDownSession();
       showReturnSection();
 
-      if (RETURN_URL) {
-        window.location.href = RETURN_URL;
+      const targetUrl = buildSafeReturnUrl(autoFeedback);
+      if (targetUrl) {
+        window.location.href = targetUrl;
       }
     }
 
@@ -298,7 +330,10 @@
         const child_name = getQueryParam("child_name", "");
         const presenting_complaint = getQueryParam("presenting_complaint", "");
         const case_summary = getQueryParam("case_summary", "");
-        const opening_line = getQueryParam("opening_line", `Hello doctor, I'm ${caregiver_name}.`);
+        const opening_line = getQueryParam(
+          "opening_line",
+          `Hello doctor, I'm ${caregiver_name}. My child's name is ${child_name}.`
+        );
         const normalizedOpeningLine = normalizeText(opening_line);
 
         if (!SESSION_ID) {
@@ -373,8 +408,24 @@
                 return;
               }
 
-              if (isFinalLine(botText)) {
-                await completeAndReturn();
+              if (isFeedbackQuestion(botText)) {
+                finalChoiceAsked = true;
+                statusEl.textContent = "Waiting for feedback choice";
+                return;
+              }
+
+              if (isFinalStopYes(botText)) {
+                await completeAndReturn("1");
+                return;
+              }
+
+              if (isFinalStopNo(botText)) {
+                await completeAndReturn("0");
+                return;
+              }
+
+              if (isLegacyFinalLine(botText)) {
+                await completeAndReturn("1");
                 return;
               }
 
@@ -460,8 +511,9 @@
 
       if (sessionFinished) {
         statusEl.textContent = "Session complete";
-        if (RETURN_URL) {
-          window.location.href = RETURN_URL;
+        const targetUrl = buildSafeReturnUrl(pendingAutoFeedback);
+        if (targetUrl) {
+          window.location.href = targetUrl;
           return;
         }
         showReturnSection();
