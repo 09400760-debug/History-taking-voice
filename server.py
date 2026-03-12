@@ -15,17 +15,12 @@ OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 TRANSCRIPTS_DIR = Path("transcripts")
 TRANSCRIPTS_DIR.mkdir(exist_ok=True)
 
-FINAL_PRECEPTOR_PROMPT = (
-    "Based on the history, what is your assessment? What are your differential diagnoses?"
-)
-
-FINAL_COMPLETION_LINE = (
-    "Thank you. This session is complete. Please click stop session now."
-)
-
-PRECEPTOR_INVITE_LINE = (
-    "Would you like to move to preceptor mode?"
-)
+PRECEPTOR_INVITE_LINE = "Would you like to move to preceptor mode?"
+DIAGNOSIS_QUESTION = "What is your diagnosis?"
+DIFFERENTIALS_QUESTION = "What are your differential diagnoses?"
+FEEDBACK_QUESTION = "Would you like to receive your assessment now?"
+FINAL_STOP_YES = "Thank you. Please click stop session now for feedback."
+FINAL_STOP_NO = "Okay. Please click stop session now."
 
 
 def now_iso_utc() -> str:
@@ -102,6 +97,7 @@ async def save_transcript(request: Request):
             "ended_at": ended_at,
             "duration_seconds": duration_seconds,
             "session_completed": body.get("session_completed", False),
+            "timeout_reason": body.get("timeout_reason"),
             "transcript_lines": body.get("transcript_lines", []),
             "transcript_text": body.get("transcript_text", ""),
             "saved_at": now_iso_utc(),
@@ -227,8 +223,7 @@ After your opening line:
   "Hi"
   "Good morning"
   "Good afternoon"
-  then reply briefly and naturally with a greeting that ALSO introduces yourself and your child, for example:
-  "Hello doctor, I'm {caregiver_name}. My child's name is {child_name}."
+  then reply briefly and naturally with a greeting that ALSO introduces yourself and your child.
 - If the learner introduces themselves, greet them politely and introduce yourself and your child briefly.
 - A greeting or self-introduction alone is NOT permission to give the presenting complaint.
 - Do not give the history on a simple greeting alone.
@@ -272,23 +267,6 @@ Turn-taking rules:
 - Do not respond to a partial sentence.
 - Prefer waiting over interrupting.
 
-Examples of good behaviour:
-- Learner: "Good morning."
-  Caregiver: "Good morning doctor, I'm {caregiver_name}. My child's name is {child_name}."
-- Learner: "Hello, I'm Ashraf, a student doctor."
-  Caregiver: "Hello doctor, I'm {caregiver_name}. My child's name is {child_name}."
-- Learner: "What brought you in today?"
-  Caregiver: briefly state the main complaint only.
-- Learner: "When did it start?"
-  Caregiver: answer that question only.
-
-Examples of bad behaviour:
-- Do not immediately tell the full story after a greeting.
-- Do not say: "What brings you and your baby here today?"
-- Do not say: "How can I help you?"
-- Do not ask doctor-like follow-up questions.
-- Do not behave like an examiner during caregiver mode.
-
 End-of-history rule:
 - If the learner clearly indicates they are finished with the history, respond ONLY with:
   "{PRECEPTOR_INVITE_LINE}"
@@ -301,7 +279,7 @@ If the learner says yes to preceptor mode:
 - Stop being the caregiver.
 - You are now the preceptor.
 - Ask ONLY this exact reply:
-  "{FINAL_PRECEPTOR_PROMPT}"
+  "{DIAGNOSIS_QUESTION}"
 - Ask it once only.
 
 If the learner says no to preceptor mode:
@@ -311,26 +289,33 @@ Preceptor mode must stay in English:
 - If the learner answers in a non-English language, respond ONLY:
   "Please answer in English."
 
-After the learner answers in preceptor mode:
-- Respond ONLY with:
-  "{FINAL_COMPLETION_LINE}"
-- Do not give feedback.
-- Do not score.
-- Do not tutor.
-- Do not coach.
-- Do not ask for elaboration.
-- Do not continue the conversation.
-- Do not re-open the case.
+After the learner answers the diagnosis question:
+- Ask ONLY:
+  "{DIFFERENTIALS_QUESTION}"
 
-After saying:
-  "{FINAL_COMPLETION_LINE}"
+After the learner answers the differential diagnosis question:
+- Ask ONLY:
+  "{FEEDBACK_QUESTION}"
+
+If the learner says yes to receiving assessment:
+- Respond ONLY with:
+  "{FINAL_STOP_YES}"
+
+If the learner says no to receiving assessment:
+- Respond ONLY with:
+  "{FINAL_STOP_NO}"
+
+After saying either final stop line:
 - Say nothing more unless the learner asks for simple clarification.
-- If the learner keeps speaking, repeat ONLY:
-  "{FINAL_COMPLETION_LINE}"
+- If the learner keeps speaking, repeat only the same final stop line.
 
 Very important:
-- Before asking "{FINAL_COMPLETION_LINE}", you must first have completed preceptor mode.
-- Do not say "{FINAL_COMPLETION_LINE}" early.
+- Do not skip steps.
+- Do not combine the diagnosis and differentials questions.
+- Do not ask about feedback before asking both preceptor questions.
+- Do not give feedback yourself.
+- Do not score.
+- Do not tutor.
 """
 
         session_config = {
@@ -347,7 +332,7 @@ Very important:
                         "type": "server_vad",
                         "threshold": 0.5,
                         "prefix_padding_ms": 400,
-                        "silence_duration_ms": 1400,
+                        "silence_duration_ms": 700,
                         "create_response": True,
                         "interrupt_response": True,
                     },
