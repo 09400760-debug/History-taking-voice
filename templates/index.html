@@ -199,7 +199,7 @@
     const CASE_SUMMARY = getQueryParam("case_summary", "");
     const OPENING_LINE = getQueryParam(
       "opening_line",
-      `Hello doctor, I'm ${CAREGIVER_NAME}, the child's ${CAREGIVER_ROLE}.`
+      `Hello doctor, I'm ${CAREGIVER_NAME}, ${CHILD_NAME}'s ${CAREGIVER_ROLE}.`
     );
 
     function buildSafeReturnUrl(autoFeedback = "0") {
@@ -633,7 +633,6 @@
         sessionEndTime = isoNow();
       }
 
-      // If the user manually stops but there is a transcript, still return for feedback.
       const hasTranscript = transcriptLines.length > 0;
 
       if (!sessionFinished && hasTranscript) {
