@@ -60,11 +60,22 @@
       border: 1px solid #e0b4b4;
       background: #fff6f6;
     }
+    .meta {
+      margin: 14px 0 18px 0;
+      padding: 12px 14px;
+      background: #f7f7f7;
+      border: 1px solid #e2e2e2;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
   </style>
 </head>
 <body>
   <h1>Realtime Voice History-Taking</h1>
   <p class="small">This page runs the live caregiver interview.</p>
+
+  <div class="meta" id="sessionMeta"></div>
 
   <div id="status">Preparing session...</div>
 
@@ -98,7 +109,9 @@
     let transcriptSaved = false;
     let stopInProgress = false;
     let autoStarted = false;
-    let finalChoiceAsked = false;
+
+    let sessionStartTime = null;
+    let sessionEndTime = null;
     let pendingAutoFeedback = "0";
 
     const statusEl = document.getElementById("status");
@@ -110,22 +123,23 @@
     const warningSection = document.getElementById("warningSection");
     const returnBtn = document.getElementById("returnBtn");
     const manualReturnBtn = document.getElementById("manualReturnBtn");
+    const sessionMetaEl = document.getElementById("sessionMeta");
 
     const ALLOWED_RETURN_ORIGINS = [
       "https://history-takinggit-eexzk8appdm3vzfej2vtuzn.streamlit.app"
     ];
 
-    const FINAL_FEEDBACK_QUESTION =
-      "Would you like to get your assessment and feedback now?";
+    const PRECEPTOR_INVITE_LINE =
+      "Would you like to move to preceptor mode?";
 
-    const FINAL_STOP_YES =
-      "Thank you. Please click stop session now.";
+    const FINAL_PRECEPTOR_PROMPT_SNIPPET_1 =
+      "based on the history what is your assessment";
 
-    const FINAL_STOP_NO =
-      "Okay. Please click stop session now.";
+    const FINAL_PRECEPTOR_PROMPT_SNIPPET_2 =
+      "what are your differential diagnoses";
 
-    const LEGACY_FINAL_LINE =
-      "Thank you. Please click stop session. You will then be taken back automatically for feedback and scoring.";
+    const FINAL_COMPLETION_LINE =
+      "Thank you. This session is complete. Please click stop session now.";
 
     function getQueryParam(name, fallback = "") {
       const params = new URLSearchParams(window.location.search);
@@ -140,7 +154,40 @@
         .replace(/\s+/g, " ");
     }
 
+    function isoNow() {
+      return new Date().toISOString();
+    }
+
+    function durationSeconds(startIso, endIso) {
+      if (!startIso || !endIso) return null;
+      const start = new Date(startIso).getTime();
+      const end = new Date(endIso).getTime();
+      if (Number.isNaN(start) || Number.isNaN(end)) return null;
+      return Math.max(0, Math.round((end - start) / 1000));
+    }
+
     const SESSION_ID = getQueryParam("session_id", "");
+    const STUDY_NUMBER = getQueryParam("study_number", "");
+    const INTERACTION_MODE = getQueryParam("interaction_mode", "");
+    const AGE_GROUP = getQueryParam("age_group", "Infant");
+    const SYSTEM = getQueryParam("system", "Respiratory");
+    const CAREGIVER_NAME = getQueryParam("caregiver_name", "Lindiwe");
+    const CHILD_NAME = getQueryParam("child_name", "");
+    const PRESENTING_COMPLAINT = getQueryParam("presenting_complaint", "");
+    const CASE_SUMMARY = getQueryParam("case_summary", "");
+    const OPENING_LINE = getQueryParam(
+      "opening_line",
+      `Hello doctor, I'm ${CAREGIVER_NAME}. My child's name is ${CHILD_NAME}.`
+    );
+
+    function renderSessionMeta() {
+      sessionMetaEl.innerHTML = `
+        <strong>Study number:</strong> ${STUDY_NUMBER || "Not provided"}<br>
+        <strong>Interaction mode:</strong> ${INTERACTION_MODE || "Realtime voice"}<br>
+        <strong>Age group:</strong> ${AGE_GROUP || "Not provided"}<br>
+        <strong>System:</strong> ${SYSTEM || "Not provided"}
+      `;
+    }
 
     function buildSafeReturnUrl(autoFeedback = "0") {
       const rawReturnUrl = getQueryParam("return_url", "");
@@ -177,8 +224,6 @@
       }
     }
 
-    setReturnLinks("0");
-
     function appendTranscriptLineToDOM(speaker, text) {
       const line = document.createElement("div");
       line.className = "line";
@@ -204,6 +249,19 @@
       try {
         const payload = {
           session_id: SESSION_ID,
+          study_number: STUDY_NUMBER || null,
+          interaction_mode: INTERACTION_MODE || "Realtime voice",
+          age_group: AGE_GROUP || null,
+          system: SYSTEM || null,
+          caregiver_name: CAREGIVER_NAME || null,
+          child_name: CHILD_NAME || null,
+          presenting_complaint: PRESENTING_COMPLAINT || null,
+          case_summary: CASE_SUMMARY || null,
+          opening_line: OPENING_LINE || null,
+          started_at: sessionStartTime,
+          ended_at: sessionEndTime || isoNow(),
+          duration_seconds: durationSeconds(sessionStartTime, sessionEndTime || isoNow()),
+          session_completed: sessionFinished,
           transcript_lines: transcriptLines,
           transcript_text: transcriptLines.map(x => `${x.speaker}: ${x.text}`).join("\n")
         };
@@ -235,8 +293,9 @@
       transcriptLines = [];
       transcriptSaved = false;
       stopInProgress = false;
-      finalChoiceAsked = false;
       pendingAutoFeedback = "0";
+      sessionStartTime = null;
+      sessionEndTime = null;
 
       transcriptEl.innerHTML = "";
       returnSection.style.display = "none";
@@ -254,20 +313,18 @@
       returnSection.style.display = "none";
     }
 
-    function isFeedbackQuestion(botText) {
-      return normalizeText(botText) === normalizeText(FINAL_FEEDBACK_QUESTION);
+    function isPreceptorInvite(botText) {
+      return normalizeText(botText) === normalizeText(PRECEPTOR_INVITE_LINE);
     }
 
-    function isFinalStopYes(botText) {
-      return normalizeText(botText) === normalizeText(FINAL_STOP_YES);
+    function isPreceptorPrompt(botText) {
+      const norm = normalizeText(botText);
+      return norm.includes(FINAL_PRECEPTOR_PROMPT_SNIPPET_1)
+        && norm.includes(FINAL_PRECEPTOR_PROMPT_SNIPPET_2);
     }
 
-    function isFinalStopNo(botText) {
-      return normalizeText(botText) === normalizeText(FINAL_STOP_NO);
-    }
-
-    function isLegacyFinalLine(botText) {
-      return normalizeText(botText) === normalizeText(LEGACY_FINAL_LINE);
+    function isFinalCompletionLine(botText) {
+      return normalizeText(botText) === normalizeText(FINAL_COMPLETION_LINE);
     }
 
     async function tearDownSession() {
@@ -297,9 +354,10 @@
       stopBtn.disabled = true;
     }
 
-    async function completeAndReturn(autoFeedback = "0") {
+    async function completeAndReturn(autoFeedback = "1") {
       sessionFinished = true;
       pendingAutoFeedback = autoFeedback;
+      sessionEndTime = isoNow();
       setReturnLinks(autoFeedback);
 
       statusEl.textContent = autoFeedback === "1"
@@ -322,19 +380,10 @@
 
       try {
         resetUiForNewSession();
+        sessionStartTime = isoNow();
         statusEl.textContent = "Accessing microphone...";
 
-        const age_group = getQueryParam("age_group", "Infant");
-        const system = getQueryParam("system", "Respiratory");
-        const caregiver_name = getQueryParam("caregiver_name", "Lindiwe");
-        const child_name = getQueryParam("child_name", "");
-        const presenting_complaint = getQueryParam("presenting_complaint", "");
-        const case_summary = getQueryParam("case_summary", "");
-        const opening_line = getQueryParam(
-          "opening_line",
-          `Hello doctor, I'm ${caregiver_name}. My child's name is ${child_name}.`
-        );
-        const normalizedOpeningLine = normalizeText(opening_line);
+        const normalizedOpeningLine = normalizeText(OPENING_LINE);
 
         if (!SESSION_ID) {
           statusEl.textContent = "Missing session ID. Please return to the main app and start a new case.";
@@ -395,36 +444,17 @@
 
               addTranscriptLine("Bot", botText);
 
-              if (normalizedBotText === normalizeText("Would you like to move to preceptor mode?")) {
+              if (isPreceptorInvite(botText)) {
                 statusEl.textContent = "Preceptor handoff offered";
                 return;
               }
 
-              if (
-                normalizedBotText.includes("based on the history what is your assessment") &&
-                normalizedBotText.includes("what are your differential diagnoses")
-              ) {
+              if (isPreceptorPrompt(botText)) {
                 statusEl.textContent = "Preceptor mode";
                 return;
               }
 
-              if (isFeedbackQuestion(botText)) {
-                finalChoiceAsked = true;
-                statusEl.textContent = "Waiting for feedback choice";
-                return;
-              }
-
-              if (isFinalStopYes(botText)) {
-                await completeAndReturn("1");
-                return;
-              }
-
-              if (isFinalStopNo(botText)) {
-                await completeAndReturn("0");
-                return;
-              }
-
-              if (isLegacyFinalLine(botText)) {
+              if (isFinalCompletionLine(botText)) {
                 await completeAndReturn("1");
                 return;
               }
@@ -461,14 +491,16 @@
 
         statusEl.textContent = "Connecting to server...";
         const query = new URLSearchParams({
-          age_group,
-          system,
-          caregiver_name,
-          child_name,
-          presenting_complaint,
-          case_summary,
-          opening_line,
-          session_id: SESSION_ID
+          age_group: AGE_GROUP,
+          system: SYSTEM,
+          caregiver_name: CAREGIVER_NAME,
+          child_name: CHILD_NAME,
+          presenting_complaint: PRESENTING_COMPLAINT,
+          case_summary: CASE_SUMMARY,
+          opening_line: OPENING_LINE,
+          session_id: SESSION_ID,
+          study_number: STUDY_NUMBER,
+          interaction_mode: INTERACTION_MODE
         }).toString();
 
         const sdpResponse = await fetch(`/session?${query}`, {
@@ -506,12 +538,16 @@
       if (stopInProgress) return;
       stopInProgress = true;
 
+      if (!sessionEndTime) {
+        sessionEndTime = isoNow();
+      }
+
       await saveTranscriptToServer();
       await tearDownSession();
 
       if (sessionFinished) {
         statusEl.textContent = "Session complete";
-        const targetUrl = buildSafeReturnUrl(pendingAutoFeedback);
+        const targetUrl = buildSafeReturnUrl(pendingAutoFeedback || "1");
         if (targetUrl) {
           window.location.href = targetUrl;
           return;
@@ -528,6 +564,9 @@
     stopBtn.addEventListener("click", stopSession);
 
     window.addEventListener("load", () => {
+      renderSessionMeta();
+      setReturnLinks("0");
+
       setTimeout(() => {
         startSession();
       }, 700);
