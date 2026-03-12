@@ -20,7 +20,6 @@ DIAGNOSIS_QUESTION = "What is your diagnosis?"
 DIFFERENTIALS_QUESTION = "What are your differential diagnoses?"
 FEEDBACK_QUESTION = "Would you like to receive your assessment now?"
 
-# Voice choices chosen by us
 FEMALE_VOICE = "marin"
 MALE_VOICE = "cedar"
 
@@ -56,10 +55,18 @@ def compute_duration_seconds(started_at: str | None, ended_at: str | None):
         return None
 
 
-def choose_voice(caregiver_gender: str) -> str:
-    g = str(caregiver_gender or "").strip().lower()
-    if g == "male":
+def choose_voice(caregiver_gender: str, caregiver_role: str) -> str:
+    gender = str(caregiver_gender or "").strip().lower()
+    role = str(caregiver_role or "").strip().lower()
+
+    if gender == "male":
         return MALE_VOICE
+    if gender == "female":
+        return FEMALE_VOICE
+
+    if any(word in role for word in ["father", "grandfather", "uncle", "male"]):
+        return MALE_VOICE
+
     return FEMALE_VOICE
 
 
@@ -177,14 +184,14 @@ async def create_session(request: Request):
         case_summary = request.query_params.get("case_summary", "").strip()
         opening_line = request.query_params.get(
             "opening_line",
-            f"Hello doctor, I'm {caregiver_name}, the child's {caregiver_role}.",
-        ).strip() or f"Hello doctor, I'm {caregiver_name}, the child's {caregiver_role}."
+            f"Hello doctor, I'm {caregiver_name}, {child_name}'s {caregiver_role}.",
+        ).strip() or f"Hello doctor, I'm {caregiver_name}, {child_name}'s {caregiver_role}."
 
         study_number = request.query_params.get("study_number", "").strip()
         interaction_mode = request.query_params.get("interaction_mode", "").strip()
         session_id = request.query_params.get("session_id", "").strip()
 
-        selected_voice = choose_voice(caregiver_gender)
+        selected_voice = choose_voice(caregiver_gender, caregiver_role)
 
         instructions = f"""
 You are simulating a realistic paediatric history-taking station for a 5th-year undergraduate medical student at the University of the Witwatersrand, Johannesburg, South Africa.
