@@ -183,7 +183,7 @@
     const INTERACTION_MODE = getQueryParam("interaction_mode", "");
     const AGE_GROUP = getQueryParam("age_group", "Infant");
     const SYSTEM = getQueryParam("system", "Respiratory");
-    const CAREGIVER_NAME = getQueryParam("caregiver_name", "Lindiwe");
+    const CAREGIVER_NAME = getQueryParam("caregiver_name", "Nomsa");
     const CHILD_NAME = getQueryParam("child_name", "");
     const PRESENTING_COMPLAINT = getQueryParam("presenting_complaint", "");
     const CASE_SUMMARY = getQueryParam("case_summary", "");
@@ -274,9 +274,7 @@
 
         const response = await fetch("/save_transcript", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
 
@@ -596,9 +594,7 @@
         const sdpResponse = await fetch(`/session?${query}`, {
           method: "POST",
           body: offer.sdp,
-          headers: {
-            "Content-Type": "application/sdp"
-          }
+          headers: { "Content-Type": "application/sdp" }
         });
 
         if (!sdpResponse.ok) {
