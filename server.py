@@ -19,8 +19,10 @@ PRECEPTOR_INVITE_LINE = "Would you like to move to preceptor mode?"
 DIAGNOSIS_QUESTION = "What is your diagnosis?"
 DIFFERENTIALS_QUESTION = "What are your differential diagnoses?"
 FEEDBACK_QUESTION = "Would you like to receive your assessment now?"
-FINAL_STOP_YES = "Thank you. Please click stop session now for feedback."
-FINAL_STOP_NO = "Okay. Please click stop session now."
+
+# Voice choices chosen by us
+FEMALE_VOICE = "marin"
+MALE_VOICE = "cedar"
 
 
 def now_iso_utc() -> str:
@@ -52,6 +54,13 @@ def compute_duration_seconds(started_at: str | None, ended_at: str | None):
         return max(0, int((end_dt - start_dt).total_seconds()))
     except Exception:
         return None
+
+
+def choose_voice(caregiver_gender: str) -> str:
+    g = str(caregiver_gender or "").strip().lower()
+    if g == "male":
+        return MALE_VOICE
+    return FEMALE_VOICE
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -89,6 +98,8 @@ async def save_transcript(request: Request):
             "age_group": body.get("age_group"),
             "system": body.get("system"),
             "caregiver_name": body.get("caregiver_name"),
+            "caregiver_gender": body.get("caregiver_gender"),
+            "caregiver_role": body.get("caregiver_role"),
             "child_name": body.get("child_name"),
             "presenting_complaint": body.get("presenting_complaint"),
             "case_summary": body.get("case_summary"),
@@ -158,18 +169,22 @@ async def create_session(request: Request):
 
         age_group = request.query_params.get("age_group", "Infant").strip() or "Infant"
         system = request.query_params.get("system", "Respiratory").strip() or "Respiratory"
-        caregiver_name = request.query_params.get("caregiver_name", "Nomsa").strip() or "Nomsa"
+        caregiver_name = request.query_params.get("caregiver_name", "Zanele").strip() or "Zanele"
+        caregiver_gender = request.query_params.get("caregiver_gender", "female").strip() or "female"
+        caregiver_role = request.query_params.get("caregiver_role", "mother").strip() or "mother"
         child_name = request.query_params.get("child_name", "").strip() or "the child"
         presenting_complaint = request.query_params.get("presenting_complaint", "").strip()
         case_summary = request.query_params.get("case_summary", "").strip()
         opening_line = request.query_params.get(
             "opening_line",
-            f"Hello doctor, I'm {caregiver_name}. My child's name is {child_name}.",
-        ).strip() or f"Hello doctor, I'm {caregiver_name}. My child's name is {child_name}."
+            f"Hello doctor, I'm {caregiver_name}, the child's {caregiver_role}.",
+        ).strip() or f"Hello doctor, I'm {caregiver_name}, the child's {caregiver_role}."
 
         study_number = request.query_params.get("study_number", "").strip()
         interaction_mode = request.query_params.get("interaction_mode", "").strip()
         session_id = request.query_params.get("session_id", "").strip()
+
+        selected_voice = choose_voice(caregiver_gender)
 
         instructions = f"""
 You are simulating a realistic paediatric history-taking station for a 5th-year undergraduate medical student at the University of the Witwatersrand, Johannesburg, South Africa.
@@ -185,6 +200,8 @@ Session metadata:
 
 Case details:
 - Caregiver name: {caregiver_name}
+- Caregiver gender: {caregiver_gender}
+- Caregiver role: {caregiver_role}
 - Child name: {child_name}
 - Presenting complaint: {presenting_complaint}
 
@@ -204,6 +221,7 @@ You are NOT the preceptor unless explicitly moved into preceptor mode.
 
 Core identity rules:
 - Your name is "{caregiver_name}".
+- Your role is "{caregiver_role}".
 - Your child's name is "{child_name}".
 - NEVER use the learner's name as your own name.
 - NEVER confuse the caregiver name and child name.
@@ -225,8 +243,9 @@ After your opening line:
   "Good afternoon"
   then reply briefly and naturally with a greeting that ALSO introduces yourself and your child.
 - If the learner introduces themselves, greet them politely and introduce yourself and your child briefly.
+- If the learner greets you first, greet back first.
 - A greeting or self-introduction alone is NOT permission to give the presenting complaint.
-- If the learner greets you first, greet back first. Do not launch straight into the child's problem on a greeting alone.
+- Do not launch straight into the child's problem on a greeting alone.
 - Do not give the history on a simple greeting alone.
 
 When to give the presenting complaint:
@@ -281,7 +300,6 @@ If the learner says yes to preceptor mode:
 - You are now the preceptor.
 - Ask ONLY this exact reply:
   "{DIAGNOSIS_QUESTION}"
-- Ask it once only.
 
 If the learner says no to preceptor mode:
 - Return to caregiver mode.
@@ -298,25 +316,12 @@ After the learner answers the differential diagnosis question:
 - Ask ONLY:
   "{FEEDBACK_QUESTION}"
 
-If the learner says yes to receiving assessment:
-- Respond ONLY with:
-  "{FINAL_STOP_YES}"
-
-If the learner says no to receiving assessment:
-- Respond ONLY with:
-  "{FINAL_STOP_NO}"
-
-After saying either final stop line:
-- Say nothing more unless the learner asks for simple clarification.
-- If the learner keeps speaking, repeat only the same final stop line.
-
-Very important:
-- Do not skip steps.
-- Do not combine the diagnosis and differentials questions.
-- Do not ask about feedback before asking both preceptor questions.
-- Do not give feedback yourself.
+Important:
+- Do not combine the diagnosis and differential questions.
+- Do not give feedback.
 - Do not score.
-- Do not tutor.
+- Do not say "click stop session".
+- After asking "{FEEDBACK_QUESTION}", wait for the learner's answer and say nothing else unless asked a simple clarification.
 """
 
         session_config = {
@@ -339,7 +344,7 @@ Very important:
                     },
                 },
                 "output": {
-                    "voice": "marin",
+                    "voice": selected_voice,
                 },
             },
         }
