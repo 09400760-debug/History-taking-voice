@@ -106,6 +106,7 @@
     let pendingAutoFeedback = "0";
     let timeoutReason = null;
     let timerHandle = null;
+    let awaitingFeedbackChoice = false;
 
     const statusEl = document.getElementById("status");
     const transcriptEl = document.getElementById("transcript");
@@ -125,8 +126,6 @@
     const DIAGNOSIS_QUESTION = "What is your diagnosis?";
     const DIFFERENTIALS_QUESTION = "What are your differential diagnoses?";
     const FEEDBACK_QUESTION = "Would you like to receive your assessment now?";
-    const FINAL_STOP_YES = "Thank you. Please click stop session now for feedback.";
-    const FINAL_STOP_NO = "Okay. Please click stop session now.";
 
     const INACTIVITY_LIMIT_MS = 5 * 60 * 1000;
     const WARNING_AT_MS = 25 * 60 * 1000;
@@ -178,18 +177,29 @@
       }
     }
 
+    function isYes(text) {
+      const t = normalizeText(text);
+      const yesValues = new Set([
+        "yes", "y", "yeah", "yep", "okay", "ok", "sure", "please do",
+        "go ahead", "continue", "yes please", "okay yes", "ok yes"
+      ]);
+      return yesValues.has(t) || t.startsWith("yes ");
+    }
+
     const SESSION_ID = getQueryParam("session_id", "");
     const STUDY_NUMBER = getQueryParam("study_number", "");
     const INTERACTION_MODE = getQueryParam("interaction_mode", "");
     const AGE_GROUP = getQueryParam("age_group", "Infant");
     const SYSTEM = getQueryParam("system", "Respiratory");
-    const CAREGIVER_NAME = getQueryParam("caregiver_name", "Nomsa");
+    const CAREGIVER_NAME = getQueryParam("caregiver_name", "Zanele");
+    const CAREGIVER_GENDER = getQueryParam("caregiver_gender", "female");
+    const CAREGIVER_ROLE = getQueryParam("caregiver_role", "mother");
     const CHILD_NAME = getQueryParam("child_name", "");
     const PRESENTING_COMPLAINT = getQueryParam("presenting_complaint", "");
     const CASE_SUMMARY = getQueryParam("case_summary", "");
     const OPENING_LINE = getQueryParam(
       "opening_line",
-      `Hello doctor, I'm ${CAREGIVER_NAME}. My child's name is ${CHILD_NAME}.`
+      `Hello doctor, I'm ${CAREGIVER_NAME}, the child's ${CAREGIVER_ROLE}.`
     );
 
     function buildSafeReturnUrl(autoFeedback = "0") {
@@ -259,6 +269,8 @@
           age_group: AGE_GROUP || null,
           system: SYSTEM || null,
           caregiver_name: CAREGIVER_NAME || null,
+          caregiver_gender: CAREGIVER_GENDER || null,
+          caregiver_role: CAREGIVER_ROLE || null,
           child_name: CHILD_NAME || null,
           presenting_complaint: PRESENTING_COMPLAINT || null,
           case_summary: CASE_SUMMARY || null,
@@ -303,6 +315,7 @@
       lastStudentSpeechTime = null;
       warningIssued = false;
       timeoutReason = null;
+      awaitingFeedbackChoice = false;
 
       if (timerHandle) {
         clearInterval(timerHandle);
@@ -339,14 +352,6 @@
 
     function isFeedbackQuestion(botText) {
       return normalizeText(botText) === normalizeText(FEEDBACK_QUESTION);
-    }
-
-    function isFinalStopYes(botText) {
-      return normalizeText(botText) === normalizeText(FINAL_STOP_YES);
-    }
-
-    function isFinalStopNo(botText) {
-      return normalizeText(botText) === normalizeText(FINAL_STOP_NO);
     }
 
     async function tearDownSession() {
@@ -493,6 +498,12 @@
               if (msg.transcript) {
                 addTranscriptLine("Student", msg.transcript);
                 lastStudentSpeechTime = isoNow();
+
+                if (awaitingFeedbackChoice && isYes(msg.transcript)) {
+                  awaitingFeedbackChoice = false;
+                  await completeAndReturn("1");
+                  return;
+                }
               }
               return;
             }
@@ -533,17 +544,8 @@
               }
 
               if (isFeedbackQuestion(botText)) {
+                awaitingFeedbackChoice = true;
                 statusEl.textContent = "Waiting for assessment choice";
-                return;
-              }
-
-              if (isFinalStopYes(botText)) {
-                await completeAndReturn("1");
-                return;
-              }
-
-              if (isFinalStopNo(botText)) {
-                await completeAndReturn("0");
                 return;
               }
 
@@ -582,6 +584,8 @@
           age_group: AGE_GROUP,
           system: SYSTEM,
           caregiver_name: CAREGIVER_NAME,
+          caregiver_gender: CAREGIVER_GENDER,
+          caregiver_role: CAREGIVER_ROLE,
           child_name: CHILD_NAME,
           presenting_complaint: PRESENTING_COMPLAINT,
           case_summary: CASE_SUMMARY,
@@ -627,6 +631,14 @@
 
       if (!sessionEndTime) {
         sessionEndTime = isoNow();
+      }
+
+      // If the user manually stops but there is a transcript, still return for feedback.
+      const hasTranscript = transcriptLines.length > 0;
+
+      if (!sessionFinished && hasTranscript) {
+        sessionFinished = true;
+        pendingAutoFeedback = "1";
       }
 
       await saveTranscriptToServer();
