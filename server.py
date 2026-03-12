@@ -158,7 +158,7 @@ async def create_session(request: Request):
 
         age_group = request.query_params.get("age_group", "Infant").strip() or "Infant"
         system = request.query_params.get("system", "Respiratory").strip() or "Respiratory"
-        caregiver_name = request.query_params.get("caregiver_name", "Lindiwe").strip() or "Lindiwe"
+        caregiver_name = request.query_params.get("caregiver_name", "Nomsa").strip() or "Nomsa"
         child_name = request.query_params.get("child_name", "").strip() or "the child"
         presenting_complaint = request.query_params.get("presenting_complaint", "").strip()
         case_summary = request.query_params.get("case_summary", "").strip()
@@ -226,6 +226,7 @@ After your opening line:
   then reply briefly and naturally with a greeting that ALSO introduces yourself and your child.
 - If the learner introduces themselves, greet them politely and introduce yourself and your child briefly.
 - A greeting or self-introduction alone is NOT permission to give the presenting complaint.
+- If the learner greets you first, greet back first. Do not launch straight into the child's problem on a greeting alone.
 - Do not give the history on a simple greeting alone.
 
 When to give the presenting complaint:
@@ -351,9 +352,7 @@ Very important:
 
             r = await client.post(
                 "https://api.openai.com/v1/realtime/calls",
-                headers={
-                    "Authorization": f"Bearer {OPENAI_API_KEY}",
-                },
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
                 files=files,
             )
 
