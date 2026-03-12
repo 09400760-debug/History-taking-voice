@@ -60,22 +60,11 @@
       border: 1px solid #e0b4b4;
       background: #fff6f6;
     }
-    .meta {
-      margin: 14px 0 18px 0;
-      padding: 12px 14px;
-      background: #f7f7f7;
-      border: 1px solid #e2e2e2;
-      border-radius: 8px;
-      font-size: 14px;
-      line-height: 1.5;
-    }
   </style>
 </head>
 <body>
   <h1>Realtime Voice History-Taking</h1>
   <p class="small">This page runs the live caregiver interview.</p>
-
-  <div class="meta" id="sessionMeta"></div>
 
   <div id="status">Preparing session...</div>
 
@@ -112,7 +101,11 @@
 
     let sessionStartTime = null;
     let sessionEndTime = null;
+    let lastStudentSpeechTime = null;
+    let warningIssued = false;
     let pendingAutoFeedback = "0";
+    let timeoutReason = null;
+    let timerHandle = null;
 
     const statusEl = document.getElementById("status");
     const transcriptEl = document.getElementById("transcript");
@@ -123,23 +116,21 @@
     const warningSection = document.getElementById("warningSection");
     const returnBtn = document.getElementById("returnBtn");
     const manualReturnBtn = document.getElementById("manualReturnBtn");
-    const sessionMetaEl = document.getElementById("sessionMeta");
 
     const ALLOWED_RETURN_ORIGINS = [
       "https://history-takinggit-eexzk8appdm3vzfej2vtuzn.streamlit.app"
     ];
 
-    const PRECEPTOR_INVITE_LINE =
-      "Would you like to move to preceptor mode?";
+    const PRECEPTOR_INVITE_LINE = "Would you like to move to preceptor mode?";
+    const DIAGNOSIS_QUESTION = "What is your diagnosis?";
+    const DIFFERENTIALS_QUESTION = "What are your differential diagnoses?";
+    const FEEDBACK_QUESTION = "Would you like to receive your assessment now?";
+    const FINAL_STOP_YES = "Thank you. Please click stop session now for feedback.";
+    const FINAL_STOP_NO = "Okay. Please click stop session now.";
 
-    const FINAL_PRECEPTOR_PROMPT_SNIPPET_1 =
-      "based on the history what is your assessment";
-
-    const FINAL_PRECEPTOR_PROMPT_SNIPPET_2 =
-      "what are your differential diagnoses";
-
-    const FINAL_COMPLETION_LINE =
-      "Thank you. This session is complete. Please click stop session now.";
+    const INACTIVITY_LIMIT_MS = 5 * 60 * 1000;
+    const WARNING_AT_MS = 25 * 60 * 1000;
+    const HARD_STOP_AT_MS = 30 * 60 * 1000;
 
     function getQueryParam(name, fallback = "") {
       const params = new URLSearchParams(window.location.search);
@@ -166,6 +157,27 @@
       return Math.max(0, Math.round((end - start) / 1000));
     }
 
+    function elapsedMs() {
+      if (!sessionStartTime) return 0;
+      return Math.max(0, new Date().getTime() - new Date(sessionStartTime).getTime());
+    }
+
+    function msSinceLastStudentSpeech() {
+      if (!lastStudentSpeechTime) return elapsedMs();
+      return Math.max(0, new Date().getTime() - new Date(lastStudentSpeechTime).getTime());
+    }
+
+    function speakLocalMessage(text) {
+      try {
+        if (!("speechSynthesis" in window)) return;
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "en-ZA";
+        window.speechSynthesis.speak(utterance);
+      } catch (err) {
+        console.warn("speechSynthesis unavailable", err);
+      }
+    }
+
     const SESSION_ID = getQueryParam("session_id", "");
     const STUDY_NUMBER = getQueryParam("study_number", "");
     const INTERACTION_MODE = getQueryParam("interaction_mode", "");
@@ -179,15 +191,6 @@
       "opening_line",
       `Hello doctor, I'm ${CAREGIVER_NAME}. My child's name is ${CHILD_NAME}.`
     );
-
-    function renderSessionMeta() {
-      sessionMetaEl.innerHTML = `
-        <strong>Study number:</strong> ${STUDY_NUMBER || "Not provided"}<br>
-        <strong>Interaction mode:</strong> ${INTERACTION_MODE || "Realtime voice"}<br>
-        <strong>Age group:</strong> ${AGE_GROUP || "Not provided"}<br>
-        <strong>System:</strong> ${SYSTEM || "Not provided"}
-      `;
-    }
 
     function buildSafeReturnUrl(autoFeedback = "0") {
       const rawReturnUrl = getQueryParam("return_url", "");
@@ -247,6 +250,8 @@
       }
 
       try {
+        const finalEndTime = sessionEndTime || isoNow();
+
         const payload = {
           session_id: SESSION_ID,
           study_number: STUDY_NUMBER || null,
@@ -259,9 +264,10 @@
           case_summary: CASE_SUMMARY || null,
           opening_line: OPENING_LINE || null,
           started_at: sessionStartTime,
-          ended_at: sessionEndTime || isoNow(),
-          duration_seconds: durationSeconds(sessionStartTime, sessionEndTime || isoNow()),
+          ended_at: finalEndTime,
+          duration_seconds: durationSeconds(sessionStartTime, finalEndTime),
           session_completed: sessionFinished,
+          timeout_reason: timeoutReason,
           transcript_lines: transcriptLines,
           transcript_text: transcriptLines.map(x => `${x.speaker}: ${x.text}`).join("\n")
         };
@@ -296,6 +302,14 @@
       pendingAutoFeedback = "0";
       sessionStartTime = null;
       sessionEndTime = null;
+      lastStudentSpeechTime = null;
+      warningIssued = false;
+      timeoutReason = null;
+
+      if (timerHandle) {
+        clearInterval(timerHandle);
+        timerHandle = null;
+      }
 
       transcriptEl.innerHTML = "";
       returnSection.style.display = "none";
@@ -317,17 +331,32 @@
       return normalizeText(botText) === normalizeText(PRECEPTOR_INVITE_LINE);
     }
 
-    function isPreceptorPrompt(botText) {
-      const norm = normalizeText(botText);
-      return norm.includes(FINAL_PRECEPTOR_PROMPT_SNIPPET_1)
-        && norm.includes(FINAL_PRECEPTOR_PROMPT_SNIPPET_2);
+    function isDiagnosisQuestion(botText) {
+      return normalizeText(botText) === normalizeText(DIAGNOSIS_QUESTION);
     }
 
-    function isFinalCompletionLine(botText) {
-      return normalizeText(botText) === normalizeText(FINAL_COMPLETION_LINE);
+    function isDifferentialsQuestion(botText) {
+      return normalizeText(botText) === normalizeText(DIFFERENTIALS_QUESTION);
+    }
+
+    function isFeedbackQuestion(botText) {
+      return normalizeText(botText) === normalizeText(FEEDBACK_QUESTION);
+    }
+
+    function isFinalStopYes(botText) {
+      return normalizeText(botText) === normalizeText(FINAL_STOP_YES);
+    }
+
+    function isFinalStopNo(botText) {
+      return normalizeText(botText) === normalizeText(FINAL_STOP_NO);
     }
 
     async function tearDownSession() {
+      if (timerHandle) {
+        clearInterval(timerHandle);
+        timerHandle = null;
+      }
+
       if (dc) {
         try { dc.close(); } catch {}
         dc = null;
@@ -374,6 +403,50 @@
       }
     }
 
+    async function forceTimeoutReturn(reason) {
+      if (sessionFinished || stopInProgress) return;
+
+      timeoutReason = reason;
+      sessionFinished = true;
+      pendingAutoFeedback = "1";
+      sessionEndTime = isoNow();
+
+      if (reason === "inactivity") {
+        addTranscriptLine("Bot", "Session ended due to inactivity. Returning for feedback now.");
+        speakLocalMessage("There has been no speech for five minutes. The session is ending now.");
+      } else if (reason === "max_duration") {
+        addTranscriptLine("Bot", "Session ended because the 30 minute limit was reached. Returning for feedback now.");
+        speakLocalMessage("The 30 minute session limit has been reached. The session is ending now.");
+      }
+
+      await completeAndReturn("1");
+    }
+
+    function startTimers() {
+      timerHandle = setInterval(async () => {
+        if (sessionFinished || stopInProgress) return;
+
+        const totalElapsed = elapsedMs();
+
+        if (!warningIssued && totalElapsed >= WARNING_AT_MS) {
+          warningIssued = true;
+          const warningText = "You have five minutes left in this session.";
+          addTranscriptLine("Bot", warningText);
+          speakLocalMessage(warningText);
+          statusEl.textContent = "Five-minute warning issued";
+        }
+
+        if (totalElapsed >= HARD_STOP_AT_MS) {
+          await forceTimeoutReturn("max_duration");
+          return;
+        }
+
+        if (msSinceLastStudentSpeech() >= INACTIVITY_LIMIT_MS) {
+          await forceTimeoutReturn("inactivity");
+        }
+      }, 15000);
+    }
+
     async function startSession() {
       if (autoStarted) return;
       autoStarted = true;
@@ -381,6 +454,7 @@
       try {
         resetUiForNewSession();
         sessionStartTime = isoNow();
+        lastStudentSpeechTime = sessionStartTime;
         statusEl.textContent = "Accessing microphone...";
 
         const normalizedOpeningLine = normalizeText(OPENING_LINE);
@@ -420,6 +494,7 @@
             if (msg.type === "conversation.item.input_audio_transcription.completed") {
               if (msg.transcript) {
                 addTranscriptLine("Student", msg.transcript);
+                lastStudentSpeechTime = isoNow();
               }
               return;
             }
@@ -449,13 +524,28 @@
                 return;
               }
 
-              if (isPreceptorPrompt(botText)) {
-                statusEl.textContent = "Preceptor mode";
+              if (isDiagnosisQuestion(botText)) {
+                statusEl.textContent = "Diagnosis question";
                 return;
               }
 
-              if (isFinalCompletionLine(botText)) {
+              if (isDifferentialsQuestion(botText)) {
+                statusEl.textContent = "Differentials question";
+                return;
+              }
+
+              if (isFeedbackQuestion(botText)) {
+                statusEl.textContent = "Waiting for assessment choice";
+                return;
+              }
+
+              if (isFinalStopYes(botText)) {
                 await completeAndReturn("1");
+                return;
+              }
+
+              if (isFinalStopNo(botText)) {
+                await completeAndReturn("0");
                 return;
               }
 
@@ -526,6 +616,7 @@
         startBtn.disabled = true;
         stopBtn.disabled = false;
         statusEl.textContent = "Live session running";
+        startTimers();
 
       } catch (err) {
         console.error(err);
@@ -564,12 +655,8 @@
     stopBtn.addEventListener("click", stopSession);
 
     window.addEventListener("load", () => {
-      renderSessionMeta();
       setReturnLinks("0");
-
-      setTimeout(() => {
-        startSession();
-      }, 700);
+      startSession();
     });
   </script>
 </body>
