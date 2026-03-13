@@ -108,9 +108,17 @@ async def save_transcript(request: Request):
             "caregiver_gender": body.get("caregiver_gender"),
             "caregiver_role": body.get("caregiver_role"),
             "child_name": body.get("child_name"),
+            "child_age": body.get("child_age"),
+            "child_sex": body.get("child_sex"),
             "presenting_complaint": body.get("presenting_complaint"),
             "case_summary": body.get("case_summary"),
             "opening_line": body.get("opening_line"),
+            "siblings": body.get("siblings"),
+            "residence": body.get("residence"),
+            "birth_place": body.get("birth_place"),
+            "household_structure": body.get("household_structure"),
+            "school_or_daycare": body.get("school_or_daycare"),
+            "caregiver_occupation": body.get("caregiver_occupation"),
             "started_at": started_at,
             "ended_at": ended_at,
             "duration_seconds": duration_seconds,
@@ -180,12 +188,21 @@ async def create_session(request: Request):
         caregiver_gender = request.query_params.get("caregiver_gender", "female").strip() or "female"
         caregiver_role = request.query_params.get("caregiver_role", "mother").strip() or "mother"
         child_name = request.query_params.get("child_name", "").strip() or "the child"
+        child_age = request.query_params.get("child_age", "").strip() or "3 years"
+        child_sex = request.query_params.get("child_sex", "").strip() or "male"
         presenting_complaint = request.query_params.get("presenting_complaint", "").strip()
         case_summary = request.query_params.get("case_summary", "").strip()
         opening_line = request.query_params.get(
             "opening_line",
             f"Hello doctor, I'm {caregiver_name}, {child_name}'s {caregiver_role}.",
         ).strip() or f"Hello doctor, I'm {caregiver_name}, {child_name}'s {caregiver_role}."
+
+        siblings = request.query_params.get("siblings", "").strip()
+        residence = request.query_params.get("residence", "").strip()
+        birth_place = request.query_params.get("birth_place", "").strip()
+        household_structure = request.query_params.get("household_structure", "").strip()
+        school_or_daycare = request.query_params.get("school_or_daycare", "").strip()
+        caregiver_occupation = request.query_params.get("caregiver_occupation", "").strip()
 
         study_number = request.query_params.get("study_number", "").strip()
         interaction_mode = request.query_params.get("interaction_mode", "").strip()
@@ -209,10 +226,18 @@ Case details:
 - Caregiver name: {caregiver_name}
 - Caregiver gender: {caregiver_gender}
 - Caregiver role: {caregiver_role}
+- Caregiver occupation: {caregiver_occupation or "Not specified"}
 - Child name: {child_name}
+- Child age: {child_age}
+- Child sex: {child_sex}
 - Presenting complaint: {presenting_complaint}
+- Siblings: {siblings or "Not specified"}
+- Residence: {residence or "Not specified"}
+- Birth place: {birth_place or "Not specified"}
+- Household structure: {household_structure or "Not specified"}
+- School/daycare: {school_or_daycare or "Not specified"}
 
-Hidden case summary:
+Hidden medical case summary:
 {case_summary}
 
 You must follow this exact structure.
@@ -284,10 +309,20 @@ General caregiver rules:
 - Answer only what is asked.
 - Keep answers brief, natural, and realistic.
 - Use simple, natural, non-medical language.
+- Keep all answers consistent with the hidden medical case summary and the known family/background facts above.
+- You should know obvious family and social facts comfortably and naturally.
+- If the learner asks about siblings, where the child lives, where the child was born, who lives at home, schooling/daycare, or your occupation, answer confidently and directly using the known facts above.
+- Do NOT say "I'm not sure" to basic everyday facts that a normal caregiver would know.
+- Only express uncertainty when it is realistic, for example:
+  - the medical diagnosis
+  - technical medical explanations
+  - exact measurements
+  - details you genuinely may not have observed
+  - precise timing if it would be hard to know exactly
 - If the learner asks a vague or unclear question, say briefly:
   "Can you explain what exactly you want to know?"
-- If you do not know something, say so naturally.
-- Keep all answers consistent with the hidden case summary.
+- If something is truly unknown in the case, say so naturally.
+- Do not sound evasive or oddly uninformed about your own child or household.
 
 Turn-taking rules:
 - If the learner's utterance sounds incomplete, partial, cut off, or interrupted, wait.
