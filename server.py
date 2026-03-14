@@ -6,6 +6,7 @@ import os
 import json
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Optional
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -16,12 +17,14 @@ TRANSCRIPTS_DIR = Path("transcripts")
 TRANSCRIPTS_DIR.mkdir(exist_ok=True)
 
 PRECEPTOR_INVITE_LINE = "Would you like to move to preceptor mode?"
-DIAGNOSIS_QUESTION = "What is your diagnosis?"
-DIFFERENTIALS_QUESTION = "What are your differential diagnoses?"
-FEEDBACK_QUESTION = "Would you like to receive your assessment now?"
+SUMMARY_QUESTION = "Please summarise the case briefly in one or two sentences."
+DIAGNOSIS_QUESTION = "What is your most likely diagnosis?"
+DIFFERENTIALS_QUESTION = "What are your main differential diagnoses?"
+FINAL_LINE = "Thank you. I will now generate your feedback."
 
 FEMALE_VOICE = "marin"
 MALE_VOICE = "cedar"
+REALTIME_MODEL = "gpt-realtime"
 
 
 def now_iso_utc() -> str:
@@ -32,7 +35,7 @@ def safe_session_id(session_id: str) -> str:
     return "".join(c for c in str(session_id).strip() if c.isalnum() or c in "-_")
 
 
-def parse_iso_datetime(value: str | None):
+def parse_iso_datetime(value: Optional[str]):
     if not value:
         return None
     try:
@@ -44,7 +47,7 @@ def parse_iso_datetime(value: str | None):
         return None
 
 
-def compute_duration_seconds(started_at: str | None, ended_at: str | None):
+def compute_duration_seconds(started_at: Optional[str], ended_at: Optional[str]):
     start_dt = parse_iso_datetime(started_at)
     end_dt = parse_iso_datetime(ended_at)
     if not start_dt or not end_dt:
@@ -73,6 +76,16 @@ def choose_voice(caregiver_gender: str, caregiver_role: str) -> str:
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.head("/")
+async def home_head():
+    return Response(status_code=200)
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=204)
 
 
 @app.post("/save_transcript")
@@ -107,6 +120,7 @@ async def save_transcript(request: Request):
             "caregiver_name": body.get("caregiver_name"),
             "caregiver_gender": body.get("caregiver_gender"),
             "caregiver_role": body.get("caregiver_role"),
+            "caregiver_occupation": body.get("caregiver_occupation"),
             "child_name": body.get("child_name"),
             "child_age": body.get("child_age"),
             "child_sex": body.get("child_sex"),
@@ -118,7 +132,6 @@ async def save_transcript(request: Request):
             "birth_place": body.get("birth_place"),
             "household_structure": body.get("household_structure"),
             "school_or_daycare": body.get("school_or_daycare"),
-            "caregiver_occupation": body.get("caregiver_occupation"),
             "started_at": started_at,
             "ended_at": ended_at,
             "duration_seconds": duration_seconds,
@@ -149,7 +162,7 @@ async def save_transcript(request: Request):
 
 
 @app.get("/latest_transcript")
-async def latest_transcript(session_id: str | None = None):
+async def latest_transcript(session_id: Optional[str] = None):
     try:
         if not session_id:
             return JSONResponse(
@@ -187,6 +200,7 @@ async def create_session(request: Request):
         caregiver_name = request.query_params.get("caregiver_name", "Zanele").strip() or "Zanele"
         caregiver_gender = request.query_params.get("caregiver_gender", "female").strip() or "female"
         caregiver_role = request.query_params.get("caregiver_role", "mother").strip() or "mother"
+        caregiver_occupation = request.query_params.get("caregiver_occupation", "").strip()
         child_name = request.query_params.get("child_name", "").strip() or "the child"
         child_age = request.query_params.get("child_age", "").strip() or "3 years"
         child_sex = request.query_params.get("child_sex", "").strip() or "male"
@@ -202,7 +216,6 @@ async def create_session(request: Request):
         birth_place = request.query_params.get("birth_place", "").strip()
         household_structure = request.query_params.get("household_structure", "").strip()
         school_or_daycare = request.query_params.get("school_or_daycare", "").strip()
-        caregiver_occupation = request.query_params.get("caregiver_occupation", "").strip()
 
         study_number = request.query_params.get("study_number", "").strip()
         interaction_mode = request.query_params.get("interaction_mode", "").strip()
@@ -264,21 +277,10 @@ Core identity rules:
 Critical opening behaviour:
 - At the very start of the conversation, say exactly this once and only once:
   "{opening_line}"
-- Do not repeat that opening line again unless the learner explicitly asks your name or your child's name.
-
-After your opening line:
-- Wait for the learner to speak.
-- If the learner says only a greeting such as:
-  "Hello"
-  "Hi"
-  "Good morning"
-  "Good afternoon"
-  then reply briefly and naturally with a greeting that ALSO introduces yourself and your child.
-- If the learner introduces themselves, greet them politely and introduce yourself and your child briefly.
-- If the learner greets you first, greet back first.
-- A greeting or self-introduction alone is NOT permission to give the presenting complaint.
-- Do not launch straight into the child's problem on a greeting alone.
-- Do not give the history on a simple greeting alone.
+- Do not repeat that full opening line again later.
+- If the learner then says only "hello", "hi", "good morning", "good afternoon", or similar, reply briefly and naturally WITHOUT repeating the full opening line.
+- A simple greeting is not permission to repeat your full introduction.
+- Only re-state your name or your child's name later if directly asked.
 
 When to give the presenting complaint:
 - Only give the presenting complaint once the learner asks an opening clinical question such as:
@@ -290,12 +292,6 @@ When to give the presenting complaint:
   "What is the problem with your child?"
 - For these broad opening clinical questions, answer briefly and directly with the main complaint in natural caregiver language.
 - Do NOT ask the learner a clinical question back.
-
-English-only rules:
-- The interaction must stay in English.
-- If the learner speaks in a non-English language or uses a non-English phrase, respond ONLY:
-  "Please repeat that in English."
-- Do not continue the interview until the learner speaks in English.
 
 General caregiver rules:
 - Stay fully in role as the caregiver unless explicitly moved into preceptor mode.
@@ -332,7 +328,8 @@ Turn-taking rules:
 End-of-history rule:
 - If the learner clearly indicates they are finished with the history, respond ONLY with:
   "{PRECEPTOR_INVITE_LINE}"
-- Do not add anything else.
+- Ask that line once only.
+- Once preceptor mode has started, never ask that line again.
 
 ========================
 STAGE 2: PRECEPTOR MODE
@@ -340,35 +337,38 @@ STAGE 2: PRECEPTOR MODE
 If the learner says yes to preceptor mode:
 - Stop being the caregiver.
 - You are now the preceptor.
+- Do not go back to caregiver mode.
 - Ask ONLY this exact reply:
-  "{DIAGNOSIS_QUESTION}"
+  "{SUMMARY_QUESTION}"
 
 If the learner says no to preceptor mode:
 - Return to caregiver mode.
 
-Preceptor mode must stay in English:
-- If the learner answers in a non-English language, respond ONLY:
-  "Please answer in English."
+After the learner answers the summary question:
+- Ask ONLY:
+  "{DIAGNOSIS_QUESTION}"
 
 After the learner answers the diagnosis question:
 - Ask ONLY:
   "{DIFFERENTIALS_QUESTION}"
 
 After the learner answers the differential diagnosis question:
-- Ask ONLY:
-  "{FEEDBACK_QUESTION}"
+- Reply ONLY:
+  "{FINAL_LINE}"
 
 Important:
-- Do not combine the diagnosis and differential questions.
-- Do not give feedback.
+- Do not combine the questions.
+- Do not ask for management.
+- Do not ask whether the learner wants feedback now.
 - Do not score.
-- Do not say "click stop session".
-- After asking "{FEEDBACK_QUESTION}", wait for the learner's answer and say nothing else unless asked a simple clarification.
-"""
+- Do not give the actual feedback yourself.
+- Do not say "Please answer in English" for standard medical abbreviations such as CVA, TBM, DKA, AGE, CNS infection, etc.
+- After saying "{FINAL_LINE}", wait and say nothing else unless the learner asks a simple clarification.
+""".strip()
 
         session_config = {
             "type": "realtime",
-            "model": "gpt-realtime-mini",
+            "model": REALTIME_MODEL,
             "instructions": instructions,
             "audio": {
                 "input": {
