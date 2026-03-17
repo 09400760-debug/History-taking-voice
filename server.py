@@ -131,6 +131,7 @@ async def save_transcript(request: Request):
             "birth_place": body.get("birth_place"),
             "household_structure": body.get("household_structure"),
             "school_or_daycare": body.get("school_or_daycare"),
+            "case_data_json": body.get("case_data_json"),
             "started_at": started_at,
             "ended_at": ended_at,
             "duration_seconds": duration_seconds,
@@ -219,6 +220,7 @@ async def create_session(request: Request):
         study_number = request.query_params.get("study_number", "").strip()
         interaction_mode = request.query_params.get("interaction_mode", "").strip()
         session_id = request.query_params.get("session_id", "").strip()
+        case_data_json = request.query_params.get("case_data_json", "").strip()
 
         selected_voice = choose_voice(caregiver_gender, caregiver_role)
 
@@ -239,6 +241,7 @@ Session metadata:
 - Study number: {study_number or "Not provided"}
 - Interaction mode: {interaction_mode or "Not provided"}
 - Session ID: {session_id or "Not provided"}
+- Case data JSON present: {"yes" if case_data_json else "no"}
 
 Case details:
 - Caregiver name: {caregiver_name}
