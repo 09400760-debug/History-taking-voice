@@ -204,6 +204,7 @@
     const CHILD_SEX = getQueryParam("child_sex", "");
     const PRESENTING_COMPLAINT = getQueryParam("presenting_complaint", "");
     const CASE_SUMMARY = getQueryParam("case_summary", "");
+    const CASE_DATA_JSON = getQueryParam("case_data_json", "");
     const OPENING_LINE = getQueryParam(
       "opening_line",
       `Hello doctor, I'm ${CAREGIVER_NAME}, ${CHILD_NAME}'s ${CAREGIVER_ROLE}.`
@@ -295,6 +296,7 @@
           birth_place: BIRTH_PLACE || null,
           household_structure: HOUSEHOLD_STRUCTURE || null,
           school_or_daycare: SCHOOL_OR_DAYCARE || null,
+          case_data_json: CASE_DATA_JSON || null,
           started_at: sessionStartTime,
           ended_at: finalEndTime,
           duration_seconds: durationSeconds(sessionStartTime, finalEndTime),
@@ -619,6 +621,7 @@
           birth_place: BIRTH_PLACE,
           household_structure: HOUSEHOLD_STRUCTURE,
           school_or_daycare: SCHOOL_OR_DAYCARE,
+          case_data_json: CASE_DATA_JSON,
           session_id: SESSION_ID,
           study_number: STUDY_NUMBER,
           interaction_mode: INTERACTION_MODE
