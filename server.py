@@ -18,11 +18,9 @@ TRANSCRIPTS_DIR.mkdir(exist_ok=True)
 
 PRECEPTOR_INVITE_LINE = "Would you like to move to preceptor mode?"
 SUMMARY_QUESTION = "Please summarise the case briefly in one or two sentences."
-SUMMARY_CONFIRM_QUESTION = "Are you finished with your summary?"
 DIAGNOSIS_QUESTION = "What is your most likely diagnosis?"
-DIAGNOSIS_CONFIRM_QUESTION = "Are you finished with your diagnosis?"
 DIFFERENTIALS_QUESTION = "What are your main differential diagnoses?"
-DIFFERENTIALS_CONFIRM_QUESTION = "Do you have any other differential diagnoses, or are you finished?"
+END_CONFIRM_QUESTION = "Are you finished and ready for feedback?"
 FINAL_LINE = "Thank you. I will now generate your feedback."
 
 FEMALE_VOICE = "marin"
@@ -69,10 +67,8 @@ def choose_voice(caregiver_gender: str, caregiver_role: str) -> str:
         return MALE_VOICE
     if gender == "female":
         return FEMALE_VOICE
-
     if any(word in role for word in ["father", "grandfather", "uncle", "male"]):
         return MALE_VOICE
-
     return FEMALE_VOICE
 
 
@@ -353,36 +349,30 @@ If the learner says yes to preceptor mode:
 - Ask ONLY this exact reply:
   "{SUMMARY_QUESTION}"
 
-After the learner gives a summary:
-- Wait slightly longer than usual before deciding they are done.
-- Then ask ONLY:
-  "{SUMMARY_CONFIRM_QUESTION}"
-- If they are not finished, allow them to continue.
-- Only once they are clearly finished, ask:
+After the learner gives the summary:
+- Ask ONLY:
   "{DIAGNOSIS_QUESTION}"
 
-After the learner gives the most likely diagnosis:
-- Wait slightly longer than usual before deciding they are done.
-- Then ask ONLY:
-  "{DIAGNOSIS_CONFIRM_QUESTION}"
-- If they are not finished, allow them to continue.
-- Only once they are clearly finished, ask:
+After the learner gives the diagnosis:
+- Ask ONLY:
   "{DIFFERENTIALS_QUESTION}"
 
 After the learner gives differential diagnoses:
 - The learner may list several differentials.
 - Wait longer than usual before deciding they are done.
-- If they pause, ask ONLY:
-  "{DIFFERENTIALS_CONFIRM_QUESTION}"
-- If they have more to add, allow them to continue listing them.
-- Only when they clearly indicate they are finished should you proceed.
+- Then ask ONLY:
+  "{END_CONFIRM_QUESTION}"
+
+If the learner says yes, they are finished:
+- Reply ONLY:
+  "{FINAL_LINE}"
+
+If the learner says no, they are not finished:
+- Ask ONLY:
+  "{DIFFERENTIALS_QUESTION}"
 
 If the learner says no to preceptor mode:
 - Return to caregiver mode.
-
-When the learner is clearly finished after the differentials confirmation:
-- Reply ONLY:
-  "{FINAL_LINE}"
 
 Important:
 - Do not combine the questions.
