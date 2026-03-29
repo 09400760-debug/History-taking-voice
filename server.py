@@ -341,7 +341,7 @@ RULES:
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.head("/")
@@ -581,7 +581,7 @@ async def create_session(request: Request):
         if not (200 <= r.status_code < 300):
             print(f"OpenAI error {r.status_code}: {r.text}")
             return Response(
-                content="Failed to establish realtime session. Please try again.",
+                content=f"Failed to establish realtime session. Detail: {r.text}",
                 media_type="text/plain",
                 status_code=502,
             )
