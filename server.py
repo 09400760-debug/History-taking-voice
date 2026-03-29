@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response, JSONResponse
-from fastapi.templating import Jinja2Templates
 import httpx
 import os
 import json
@@ -9,11 +8,13 @@ from datetime import datetime, timezone
 from typing import Optional
 
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
-TRANSCRIPTS_DIR = Path("transcripts")
+BASE_DIR = Path(__file__).resolve().parent
+INDEX_HTML_PATH = BASE_DIR / "templates" / "index.html"
+
+TRANSCRIPTS_DIR = BASE_DIR / "transcripts"
 TRANSCRIPTS_DIR.mkdir(exist_ok=True)
 
 PRECEPTOR_INVITE_LINE = "Would you like to move to preceptor mode?"
@@ -190,19 +191,13 @@ General caregiver rules:
 - You should know obvious family and social facts comfortably and naturally.
 - If the learner asks about siblings, where the child lives, where the child was born, who lives at home, schooling/daycare, or your occupation, answer confidently and directly using the known facts above.
 - Do NOT say "I'm not sure" to basic everyday facts that a normal caregiver would know.
-- Only express uncertainty when it is realistic, for example:
-  - the diagnosis
-  - technical medical explanations
-  - exact measurements
-  - details you genuinely may not have observed
-  - precise timing if it would be hard to know exactly
+- Only express uncertainty when it is realistic.
 - If the learner asks a vague or unclear question, say briefly:
   "Can you explain what exactly you want to know?"
 - If something is truly unknown in the case, say so naturally.
 
 Management-focus protection:
 - Do not steer the encounter toward management.
-- Do not ask what treatment is needed, whether the child will be admitted, or what medicines are required unless the learner explicitly asks management questions.
 - If the learner asks management-focused questions, answer briefly and neutrally, and do not let management become the main direction of the station.
 
 Turn-taking rules:
@@ -235,7 +230,6 @@ After the learner gives the diagnosis:
   "{DIFFERENTIALS_QUESTION}"
 
 After the learner gives differential diagnoses:
-- The learner may list several differentials.
 - Wait longer than usual before deciding they are done.
 - Then ask ONLY:
   "{END_CONFIRM_QUESTION}"
@@ -250,14 +244,6 @@ If the learner says no, they are not finished:
 
 If the learner says no to preceptor mode:
 - Return to caregiver mode.
-
-Important:
-- Do not combine the questions.
-- Do not ask for management.
-- Do not ask whether the learner wants feedback now.
-- Do not score.
-- Do not give the actual feedback yourself.
-- After saying "{FINAL_LINE}", wait and say nothing else unless the learner asks a simple clarification.
 """.strip()
 
 
@@ -329,8 +315,7 @@ RULES:
 - Only reveal information when asked.
 - Use simple caregiver language, not textbook language.
 - Keep your answers internally consistent with the hidden case summary and family details.
-- If the learner asks about background facts such as siblings, residence, birth place, who lives at home, school/daycare, or your occupation, answer confidently using the information above.
-- Do not say "How can I help you?" or ask a clinical opening question.
+- If the learner asks about background facts, answer confidently using the information above.
 - If the learner's question is vague or unclear, say briefly:
   "Can you explain what exactly you want to know?"
 - If the learner's utterance sounds incomplete, partial, cut off, or interrupted, wait.
@@ -340,8 +325,12 @@ RULES:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    return templates.TemplateResponse(request, "index.html")
+async def home():
+    try:
+        html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+        return HTMLResponse(content=html, status_code=200)
+    except Exception as e:
+        return HTMLResponse(content=f"Could not load index.html. Detail: {str(e)}", status_code=500)
 
 
 @app.head("/")
@@ -363,10 +352,7 @@ async def save_transcript(request: Request):
         safe_id = safe_session_id(session_id)
 
         if not safe_id:
-            return JSONResponse(
-                {"status": "error", "message": "Missing session_id"},
-                status_code=400,
-            )
+            return JSONResponse({"status": "error", "message": "Missing session_id"}, status_code=400)
 
         transcript_file = TRANSCRIPTS_DIR / f"transcript_{safe_id}.json"
 
@@ -413,30 +399,18 @@ async def save_transcript(request: Request):
         with open(transcript_file, "w", encoding="utf-8") as f:
             json.dump(transcript_payload, f, ensure_ascii=False, indent=2)
 
-        return JSONResponse(
-            {
-                "status": "ok",
-                "session_id": safe_id,
-                "file": str(transcript_file),
-            }
-        )
+        return JSONResponse({"status": "ok", "session_id": safe_id, "file": str(transcript_file)})
 
     except Exception as e:
         print(f"save_transcript error: {e}")
-        return JSONResponse(
-            {"status": "error", "message": "Could not save transcript"},
-            status_code=500,
-        )
+        return JSONResponse({"status": "error", "message": "Could not save transcript"}, status_code=500)
 
 
 @app.get("/latest_transcript")
 async def latest_transcript(session_id: Optional[str] = None):
     try:
         if not session_id:
-            return JSONResponse(
-                {"status": "error", "message": "session_id is required"},
-                status_code=400,
-            )
+            return JSONResponse({"status": "error", "message": "session_id is required"}, status_code=400)
 
         safe_id = safe_session_id(session_id)
         transcript_file = TRANSCRIPTS_DIR / f"transcript_{safe_id}.json"
@@ -451,17 +425,13 @@ async def latest_transcript(session_id: Optional[str] = None):
 
     except Exception as e:
         print(f"latest_transcript error: {e}")
-        return JSONResponse(
-            {"status": "error", "message": "Could not load transcript"},
-            status_code=500,
-        )
+        return JSONResponse({"status": "error", "message": "Could not load transcript"}, status_code=500)
 
 
 @app.post("/session")
 async def create_session(request: Request):
     try:
-        offer_sdp = await request.body()
-        offer_sdp = offer_sdp.decode("utf-8")
+        offer_sdp = (await request.body()).decode("utf-8")
 
         age_group = request.query_params.get("age_group", "Infant").strip() or "Infant"
         system = request.query_params.get("system", "Respiratory").strip() or "Respiratory"
@@ -495,50 +465,19 @@ async def create_session(request: Request):
 
         if study_group == NON_CUSTOMIZED_GROUP:
             instructions = build_non_customized_instructions(
-                age_group=age_group,
-                system=system,
-                caregiver_name=caregiver_name,
-                caregiver_gender=caregiver_gender,
-                caregiver_role=caregiver_role,
-                caregiver_occupation=caregiver_occupation,
-                child_name=child_name,
-                child_age=child_age,
-                child_sex=child_sex,
-                presenting_complaint=presenting_complaint,
-                case_summary=case_summary,
-                opening_line=opening_line,
-                siblings=siblings,
-                residence=residence,
-                birth_place=birth_place,
-                household_structure=household_structure,
-                school_or_daycare=school_or_daycare,
-                study_number=study_number,
-                interaction_mode=interaction_mode,
-                session_id=session_id,
+                age_group, system, caregiver_name, caregiver_gender, caregiver_role,
+                caregiver_occupation, child_name, child_age, child_sex,
+                presenting_complaint, case_summary, opening_line, siblings,
+                residence, birth_place, household_structure, school_or_daycare,
+                study_number, interaction_mode, session_id
             )
         else:
             instructions = build_customized_instructions(
-                age_group=age_group,
-                system=system,
-                caregiver_name=caregiver_name,
-                caregiver_gender=caregiver_gender,
-                caregiver_role=caregiver_role,
-                caregiver_occupation=caregiver_occupation,
-                child_name=child_name,
-                child_age=child_age,
-                child_sex=child_sex,
-                presenting_complaint=presenting_complaint,
-                case_summary=case_summary,
-                opening_line=opening_line,
-                siblings=siblings,
-                residence=residence,
-                birth_place=birth_place,
-                household_structure=household_structure,
-                school_or_daycare=school_or_daycare,
-                study_number=study_number,
-                interaction_mode=interaction_mode,
-                session_id=session_id,
-                case_data_json=case_data_json,
+                age_group, system, caregiver_name, caregiver_gender, caregiver_role,
+                caregiver_occupation, child_name, child_age, child_sex,
+                presenting_complaint, case_summary, opening_line, siblings,
+                residence, birth_place, household_structure, school_or_daycare,
+                study_number, interaction_mode, session_id, case_data_json
             )
 
         session_config = {
@@ -586,11 +525,7 @@ async def create_session(request: Request):
                 status_code=502,
             )
 
-        return Response(
-            content=r.text,
-            media_type="application/sdp",
-            status_code=200,
-        )
+        return Response(content=r.text, media_type="application/sdp", status_code=200)
 
     except Exception as e:
         print(f"Session exception: {e}")
