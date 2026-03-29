@@ -10,6 +10,7 @@
       margin: 40px auto;
       padding: 0 20px;
     }
+
     button, a.button-link {
       display: inline-block;
       padding: 10px 16px;
@@ -23,14 +24,17 @@
       border-radius: 6px;
       cursor: pointer;
     }
+
     button:disabled {
       opacity: 0.6;
       cursor: not-allowed;
     }
+
     #status {
       margin: 12px 0;
       font-weight: bold;
     }
+
     #transcript {
       border: 1px solid #ccc;
       padding: 16px;
@@ -38,43 +42,52 @@
       background: #fafafa;
       overflow-y: auto;
     }
+
     .line {
       white-space: pre-wrap;
       margin-bottom: 6px;
     }
+
     .small {
       color: #666;
       font-size: 14px;
     }
+
     #returnSection, #warningSection {
       display: none;
       margin-top: 20px;
       padding: 16px;
       border-radius: 8px;
     }
+
     #returnSection {
       border: 1px solid #d9d9d9;
       background: #f9f9f9;
     }
+
     #warningSection {
       border: 1px solid #e0b4b4;
       background: #fff6f6;
     }
+
     @media (max-width: 768px) {
       body {
         margin: 16px auto;
         padding: 0 12px;
       }
+
       button, a.button-link {
         width: 100%;
         margin-right: 0;
       }
+
       #transcript {
         min-height: 240px;
       }
     }
   </style>
 </head>
+
 <body>
   <h1>Realtime Voice History-Taking</h1>
   <p class="small">This page runs the live caregiver interview.</p>
@@ -193,6 +206,7 @@
     const SESSION_ID = getQueryParam("session_id", "");
     const STUDY_NUMBER = getQueryParam("study_number", "");
     const INTERACTION_MODE = getQueryParam("interaction_mode", "");
+    const STUDY_GROUP = getQueryParam("study_group", "customized");
     const AGE_GROUP = getQueryParam("age_group", "Infant");
     const SYSTEM = getQueryParam("system", "Respiratory");
     const CAREGIVER_NAME = getQueryParam("caregiver_name", "Zanele");
@@ -214,6 +228,8 @@
     const BIRTH_PLACE = getQueryParam("birth_place", "");
     const HOUSEHOLD_STRUCTURE = getQueryParam("household_structure", "");
     const SCHOOL_OR_DAYCARE = getQueryParam("school_or_daycare", "");
+
+    const AUTO_FEEDBACK_DEFAULT = STUDY_GROUP === "customized" ? "1" : "0";
 
     function buildSafeReturnUrl(autoFeedback = "0") {
       const rawReturnUrl = getQueryParam("return_url", "");
@@ -278,6 +294,7 @@
         const payload = {
           session_id: SESSION_ID,
           study_number: STUDY_NUMBER || null,
+          study_group: STUDY_GROUP || null,
           interaction_mode: INTERACTION_MODE || "Realtime voice",
           age_group: AGE_GROUP || null,
           system: SYSTEM || null,
@@ -331,7 +348,7 @@
       transcriptLines = [];
       transcriptSaved = false;
       stopInProgress = false;
-      pendingAutoFeedback = "0";
+      pendingAutoFeedback = AUTO_FEEDBACK_DEFAULT;
       sessionStartTime = null;
       sessionEndTime = null;
       lastStudentSpeechTime = null;
@@ -346,7 +363,7 @@
       transcriptEl.innerHTML = "";
       returnSection.style.display = "none";
       warningSection.style.display = "none";
-      setReturnLinks("0");
+      setReturnLinks(AUTO_FEEDBACK_DEFAULT);
     }
 
     function showReturnSection() {
@@ -411,7 +428,7 @@
       stopBtn.disabled = true;
     }
 
-    async function completeAndReturn(autoFeedback = "1") {
+    async function completeAndReturn(autoFeedback = AUTO_FEEDBACK_DEFAULT) {
       sessionFinished = true;
       pendingAutoFeedback = autoFeedback;
       sessionEndTime = isoNow();
@@ -436,18 +453,18 @@
 
       timeoutReason = reason;
       sessionFinished = true;
-      pendingAutoFeedback = "1";
+      pendingAutoFeedback = AUTO_FEEDBACK_DEFAULT;
       sessionEndTime = isoNow();
 
       if (reason === "inactivity") {
-        addTranscriptLine("Bot", "Session ended due to inactivity. Returning for feedback now.");
+        addTranscriptLine("Bot", "Session ended due to inactivity. Returning now.");
         speakLocalMessage("There has been no speech for five minutes. The session is ending now.");
       } else if (reason === "max_duration") {
-        addTranscriptLine("Bot", "Session ended because the 30 minute limit was reached. Returning for feedback now.");
+        addTranscriptLine("Bot", "Session ended because the 30 minute limit was reached. Returning now.");
         speakLocalMessage("The 30 minute session limit has been reached. The session is ending now.");
       }
 
-      await completeAndReturn("1");
+      await completeAndReturn(AUTO_FEEDBACK_DEFAULT);
     }
 
     function startTimers() {
@@ -547,29 +564,31 @@
 
               addTranscriptLine("Bot", botText);
 
-              if (isPreceptorInvite(botText)) {
-                statusEl.textContent = "Preceptor handoff offered";
-                return;
-              }
+              if (STUDY_GROUP === "customized") {
+                if (isPreceptorInvite(botText)) {
+                  statusEl.textContent = "Preceptor handoff offered";
+                  return;
+                }
 
-              if (isSummaryQuestion(botText)) {
-                statusEl.textContent = "Summary question";
-                return;
-              }
+                if (isSummaryQuestion(botText)) {
+                  statusEl.textContent = "Summary question";
+                  return;
+                }
 
-              if (isDiagnosisQuestion(botText)) {
-                statusEl.textContent = "Diagnosis question";
-                return;
-              }
+                if (isDiagnosisQuestion(botText)) {
+                  statusEl.textContent = "Diagnosis question";
+                  return;
+                }
 
-              if (isDifferentialsQuestion(botText)) {
-                statusEl.textContent = "Differentials question";
-                return;
-              }
+                if (isDifferentialsQuestion(botText)) {
+                  statusEl.textContent = "Differentials question";
+                  return;
+                }
 
-              if (isFinalLine(botText)) {
-                await completeAndReturn("1");
-                return;
+                if (isFinalLine(botText)) {
+                  await completeAndReturn("1");
+                  return;
+                }
               }
 
               return;
@@ -624,7 +643,8 @@
           case_data_json: CASE_DATA_JSON,
           session_id: SESSION_ID,
           study_number: STUDY_NUMBER,
-          interaction_mode: INTERACTION_MODE
+          interaction_mode: INTERACTION_MODE,
+          study_group: STUDY_GROUP
         }).toString();
 
         const sdpResponse = await fetch(`/session?${query}`, {
@@ -669,7 +689,7 @@
 
       if (!sessionFinished && hasTranscript) {
         sessionFinished = true;
-        pendingAutoFeedback = "1";
+        pendingAutoFeedback = AUTO_FEEDBACK_DEFAULT;
       }
 
       await saveTranscriptToServer();
@@ -677,7 +697,7 @@
 
       if (sessionFinished) {
         statusEl.textContent = "Session complete";
-        const targetUrl = buildSafeReturnUrl(pendingAutoFeedback || "1");
+        const targetUrl = buildSafeReturnUrl(pendingAutoFeedback || AUTO_FEEDBACK_DEFAULT);
         if (targetUrl) {
           window.location.href = targetUrl;
           return;
@@ -694,7 +714,7 @@
     stopBtn.addEventListener("click", stopSession);
 
     window.addEventListener("load", () => {
-      setReturnLinks("0");
+      setReturnLinks(AUTO_FEEDBACK_DEFAULT);
       startSession();
     });
   </script>
