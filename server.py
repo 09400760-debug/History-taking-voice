@@ -25,7 +25,7 @@ FINAL_LINE = "Thank you. I will now generate your feedback."
 
 FEMALE_VOICE = "marin"
 MALE_VOICE = "cedar"
-REALTIME_MODEL = "gpt-realtime"
+REALTIME_MODEL = "gpt-realtime-mini"
 
 CUSTOMIZED_GROUP = "customized"
 NON_CUSTOMIZED_GROUP = "non_customized"
@@ -569,7 +569,7 @@ async def create_session(request: Request):
         async with httpx.AsyncClient(timeout=60.0) as client:
             files = {
                 "sdp": (None, offer_sdp),
-                "session": (None, json.dumps(session_config)),
+                "session": (None, json.dumps(session_config, default=str)),
             }
 
             r = await client.post(
@@ -595,7 +595,7 @@ async def create_session(request: Request):
     except Exception as e:
         print(f"Session exception: {e}")
         return Response(
-            content="An internal error occurred. Please try again.",
+            content=f"An internal error occurred. Please try again. Detail: {str(e)}",
             media_type="text/plain",
             status_code=500,
         )
