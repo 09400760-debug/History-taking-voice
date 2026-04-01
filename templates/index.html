@@ -124,6 +124,7 @@
     let transcriptSaved = false;
     let stopInProgress = false;
     let autoStarted = false;
+    let reachedFeedbackHandoff = false;
 
     let sessionStartTime = null;
     let sessionEndTime = null;
@@ -348,6 +349,7 @@
       transcriptLines = [];
       transcriptSaved = false;
       stopInProgress = false;
+      reachedFeedbackHandoff = false;
       pendingAutoFeedback = AUTO_FEEDBACK_DEFAULT;
       sessionStartTime = null;
       sessionEndTime = null;
@@ -377,23 +379,32 @@
     }
 
     function isPreceptorInvite(botText) {
-      return normalizeText(botText) === normalizeText(PRECEPTOR_INVITE_LINE);
+      const t = normalizeText(botText);
+      return t === normalizeText(PRECEPTOR_INVITE_LINE) || t.includes("move to preceptor mode");
     }
 
     function isSummaryQuestion(botText) {
-      return normalizeText(botText) === normalizeText(SUMMARY_QUESTION);
+      const t = normalizeText(botText);
+      return t === normalizeText(SUMMARY_QUESTION) || t.includes("summarise the case briefly");
     }
 
     function isDiagnosisQuestion(botText) {
-      return normalizeText(botText) === normalizeText(DIAGNOSIS_QUESTION);
+      const t = normalizeText(botText);
+      return t === normalizeText(DIAGNOSIS_QUESTION) || t.includes("most likely diagnosis");
     }
 
     function isDifferentialsQuestion(botText) {
-      return normalizeText(botText) === normalizeText(DIFFERENTIALS_QUESTION);
+      const t = normalizeText(botText);
+      return t === normalizeText(DIFFERENTIALS_QUESTION) || t.includes("main differential diagnoses");
     }
 
     function isFinalLine(botText) {
-      return normalizeText(botText) === normalizeText(FINAL_LINE);
+      const t = normalizeText(botText);
+      return (
+        t === normalizeText(FINAL_LINE) ||
+        t.includes("i will now generate your feedback") ||
+        t.includes("generate your feedback")
+      );
     }
 
     async function tearDownSession() {
@@ -586,6 +597,7 @@
                 }
 
                 if (isFinalLine(botText)) {
+                  reachedFeedbackHandoff = true;
                   await completeAndReturn("1");
                   return;
                 }
@@ -687,22 +699,31 @@
 
       const hasTranscript = transcriptLines.length > 0;
 
-      if (!sessionFinished && hasTranscript) {
+      if (!sessionFinished && reachedFeedbackHandoff) {
         sessionFinished = true;
-        pendingAutoFeedback = AUTO_FEEDBACK_DEFAULT;
+        pendingAutoFeedback = "1";
+      } else {
+        sessionFinished = false;
+        pendingAutoFeedback = "0";
       }
 
       await saveTranscriptToServer();
       await tearDownSession();
 
-      if (sessionFinished) {
-        statusEl.textContent = "Session complete";
-        const targetUrl = buildSafeReturnUrl(pendingAutoFeedback || AUTO_FEEDBACK_DEFAULT);
+      if (hasTranscript) {
+        const targetUrl = buildSafeReturnUrl(pendingAutoFeedback || "0");
         if (targetUrl) {
           window.location.href = targetUrl;
           return;
         }
-        showReturnSection();
+
+        if (sessionFinished) {
+          statusEl.textContent = "Session complete";
+          showReturnSection();
+        } else {
+          statusEl.textContent = "Session stopped before completion";
+          showIncompleteWarning();
+        }
       } else {
         statusEl.textContent = "Session stopped before completion";
         showIncompleteWarning();
