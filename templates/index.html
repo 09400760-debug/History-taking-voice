@@ -152,6 +152,7 @@
     const SUMMARY_QUESTION = "Please summarise the case briefly in one or two sentences.";
     const DIAGNOSIS_QUESTION = "What is your most likely diagnosis?";
     const DIFFERENTIALS_QUESTION = "What are your main differential diagnoses?";
+    const END_CONFIRM_QUESTION = "Are you finished and ready for feedback?";
     const FINAL_LINE = "Thank you. I will now generate your feedback.";
 
     const INACTIVITY_LIMIT_MS = 5 * 60 * 1000;
@@ -398,6 +399,11 @@
       return t === normalizeText(DIFFERENTIALS_QUESTION) || t.includes("main differential diagnoses");
     }
 
+    function isEndConfirmQuestion(botText) {
+      const t = normalizeText(botText);
+      return t === normalizeText(END_CONFIRM_QUESTION) || t.includes("ready for feedback");
+    }
+
     function isFinalLine(botText) {
       const t = normalizeText(botText);
       return (
@@ -593,6 +599,11 @@
 
                 if (isDifferentialsQuestion(botText)) {
                   statusEl.textContent = "Differentials question";
+                  return;
+                }
+
+                if (isEndConfirmQuestion(botText)) {
+                  statusEl.textContent = "Awaiting final confirmation";
                   return;
                 }
 
