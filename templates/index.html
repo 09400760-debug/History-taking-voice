@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>Realtime Voice Case</title>
+
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -134,6 +135,11 @@
     let timeoutReason = null;
     let timerHandle = null;
 
+    let botResponseBuffer = "";
+    let botResponseInProgress = false;
+    let lastCommittedBotText = "";
+    let lastStudentTranscript = "";
+
     const statusEl = document.getElementById("status");
     const transcriptEl = document.getElementById("transcript");
     const remoteAudioEl = document.getElementById("remoteAudio");
@@ -154,6 +160,7 @@
     const DIFFERENTIALS_QUESTION = "What are your main differential diagnoses?";
     const END_CONFIRM_QUESTION = "Are you finished and ready for feedback?";
     const FINAL_LINE = "Thank you. I will now generate your feedback.";
+    const NON_CUSTOMIZED_FEEDBACK_QUESTION = "Would you like any feedback?";
 
     const INACTIVITY_LIMIT_MS = 5 * 60 * 1000;
     const WARNING_AT_MS = 25 * 60 * 1000;
@@ -287,6 +294,53 @@
       appendTranscriptLineToDOM(speaker, text);
     }
 
+    function isDuplicateStudentText(text) {
+      const t = normalizeText(text);
+      return !!t && t === normalizeText(lastStudentTranscript);
+    }
+
+    function markStudentText(text) {
+      lastStudentTranscript = text || "";
+    }
+
+    function isDuplicateBotText(text) {
+      const t = normalizeText(text);
+      return !!t && t === normalizeText(lastCommittedBotText);
+    }
+
+    function markBotText(text) {
+      lastCommittedBotText = text || "";
+    }
+
+    function looksLikeBlockedClinicianDrift(text) {
+      const t = normalizeText(text);
+      const blockedPhrases = [
+        "how can i help you",
+        "what seems to be the problem today",
+        "can you tell me more about that",
+        "could you tell me a bit more",
+        "im sorry to hear that can you tell me more",
+        "i'm sorry to hear that can you tell me more",
+        "what brings you in today",
+        "please tell me more about that"
+      ];
+      return blockedPhrases.some(p => t.includes(p));
+    }
+
+    function looksLikeIncompleteOrGarbled(text) {
+      const t = normalizeText(text);
+      if (!t) return true;
+      if (t.length < 2) return true;
+      return false;
+    }
+
+    function shouldCommitBotText(text) {
+      if (looksLikeIncompleteOrGarbled(text)) return false;
+      if (isDuplicateBotText(text)) return false;
+      if (looksLikeBlockedClinicianDrift(text)) return false;
+      return true;
+    }
+
     async function saveTranscriptToServer() {
       if (transcriptSaved) return true;
 
@@ -364,6 +418,11 @@
       warningIssued = false;
       timeoutReason = null;
 
+      botResponseBuffer = "";
+      botResponseInProgress = false;
+      lastCommittedBotText = "";
+      lastStudentTranscript = "";
+
       if (timerHandle) {
         clearInterval(timerHandle);
         timerHandle = null;
@@ -410,6 +469,11 @@
       return t === normalizeText(END_CONFIRM_QUESTION) || t.includes("ready for feedback");
     }
 
+    function isNonCustomizedFeedbackQuestion(botText) {
+      const t = normalizeText(botText);
+      return t === normalizeText(NON_CUSTOMIZED_FEEDBACK_QUESTION) || t.includes("would you like any feedback");
+    }
+
     function isFinalLine(botText) {
       const t = normalizeText(botText);
       return (
@@ -417,6 +481,36 @@
         t.includes("i will now generate your feedback") ||
         t.includes("generate your feedback")
       );
+    }
+
+    function commitBufferedBotText() {
+      const botText = (botResponseBuffer || "").trim();
+      botResponseBuffer = "";
+      botResponseInProgress = false;
+
+      if (!botText) return null;
+
+      const normalizedOpeningLine = normalizeText(OPENING_LINE);
+      const normalizedBotText = normalizeText(botText);
+
+      if (normalizedBotText === normalizedOpeningLine) {
+        if (!openingLineSeen) {
+          openingLineSeen = true;
+          addTranscriptLine("Bot", botText);
+          markBotText(botText);
+          return botText;
+        }
+        return null;
+      }
+
+      if (!shouldCommitBotText(botText)) {
+        console.warn("Blocked bot line:", botText);
+        return null;
+      }
+
+      addTranscriptLine("Bot", botText);
+      markBotText(botText);
+      return botText;
     }
 
     async function tearDownSession() {
@@ -525,8 +619,6 @@
         lastStudentSpeechTime = sessionStartTime;
         statusEl.textContent = "Accessing microphone...";
 
-        const normalizedOpeningLine = normalizeText(OPENING_LINE);
-
         if (!SESSION_ID) {
           statusEl.textContent = "Missing session ID. Please return to the main app and start a new case.";
           return;
@@ -561,59 +653,103 @@
 
             if (msg.type === "conversation.item.input_audio_transcription.completed") {
               if (msg.transcript) {
-                addTranscriptLine("Student", msg.transcript);
-                lastStudentSpeechTime = isoNow();
+                const studentText = String(msg.transcript || "").trim();
+                if (studentText && !isDuplicateStudentText(studentText)) {
+                  addTranscriptLine("Student", studentText);
+                  markStudentText(studentText);
+                  lastStudentSpeechTime = isoNow();
+                }
               }
               return;
             }
 
+            if (msg.type === "response.output_text.delta") {
+              botResponseInProgress = true;
+              botResponseBuffer += msg.delta || "";
+              return;
+            }
+
+            if (msg.type === "response.completed") {
+              const committedText = commitBufferedBotText();
+              if (!committedText) return;
+
+              if (STUDY_GROUP === "customized") {
+                if (isPreceptorInvite(committedText)) {
+                  statusEl.textContent = "Preceptor handoff offered";
+                  return;
+                }
+
+                if (isSummaryQuestion(committedText)) {
+                  statusEl.textContent = "Summary question";
+                  return;
+                }
+
+                if (isDiagnosisQuestion(committedText)) {
+                  statusEl.textContent = "Diagnosis question";
+                  return;
+                }
+
+                if (isDifferentialsQuestion(committedText)) {
+                  statusEl.textContent = "Differentials question";
+                  return;
+                }
+
+                if (isEndConfirmQuestion(committedText)) {
+                  statusEl.textContent = "Awaiting final confirmation";
+                  return;
+                }
+
+                if (isFinalLine(committedText)) {
+                  reachedFeedbackHandoff = true;
+                  await completeAndReturn("1");
+                  return;
+                }
+              } else {
+                if (isNonCustomizedFeedbackQuestion(committedText)) {
+                  statusEl.textContent = "Feedback choice offered";
+                  return;
+                }
+              }
+
+              return;
+            }
+
             if (msg.type === "response.output_item.done") {
+              if (botResponseInProgress && botResponseBuffer.trim()) {
+                return;
+              }
+
               const item = msg.item;
               if (!item || !item.content) return;
 
               const transcriptPart = item.content.find(c => c.transcript);
               if (!transcriptPart || !transcriptPart.transcript) return;
 
-              const botText = transcriptPart.transcript;
-              const normalizedBotText = normalizeText(botText);
+              const fallbackText = String(transcriptPart.transcript || "").trim();
+              if (!fallbackText) return;
+              if (isDuplicateBotText(fallbackText)) return;
+              if (!shouldCommitBotText(fallbackText)) {
+                console.warn("Blocked fallback bot line:", fallbackText);
+                return;
+              }
 
-              if (normalizedBotText === normalizedOpeningLine) {
+              const normalizedOpeningLine = normalizeText(OPENING_LINE);
+              const normalizedFallbackText = normalizeText(fallbackText);
+
+              if (normalizedFallbackText === normalizedOpeningLine) {
                 if (!openingLineSeen) {
                   openingLineSeen = true;
-                  addTranscriptLine("Bot", botText);
+                  addTranscriptLine("Bot", fallbackText);
+                  markBotText(fallbackText);
                 }
                 return;
               }
 
-              addTranscriptLine("Bot", botText);
+              addTranscriptLine("Bot", fallbackText);
+              markBotText(fallbackText);
 
               if (STUDY_GROUP === "customized") {
-                if (isPreceptorInvite(botText)) {
-                  statusEl.textContent = "Preceptor handoff offered";
-                  return;
-                }
-
-                if (isSummaryQuestion(botText)) {
-                  statusEl.textContent = "Summary question";
-                  return;
-                }
-
-                if (isDiagnosisQuestion(botText)) {
-                  statusEl.textContent = "Diagnosis question";
-                  return;
-                }
-
-                if (isDifferentialsQuestion(botText)) {
-                  statusEl.textContent = "Differentials question";
-                  return;
-                }
-
-                if (isEndConfirmQuestion(botText)) {
-                  statusEl.textContent = "Awaiting final confirmation";
-                  return;
-                }
-
-                if (isFinalLine(botText)) {
+                if (isFinalLine(fallbackText)) {
                   reachedFeedbackHandoff = true;
                   await completeAndReturn("1");
                   return;
@@ -711,6 +847,10 @@
       if (stopInProgress) return;
       stopInProgress = true;
 
+      if (botResponseBuffer && botResponseBuffer.trim()) {
+        commitBufferedBotText();
+      }
+
       if (!sessionEndTime) {
         sessionEndTime = isoNow();
       }
@@ -754,6 +894,7 @@
 
     window.addEventListener("load", () => {
       setReturnLinks(AUTO_FEEDBACK_DEFAULT);
+      startBtn.disabled = false;
       startSession();
     });
   </script>
