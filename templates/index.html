@@ -172,6 +172,10 @@
         .replace(/\s+/g, " ");
     }
 
+    function normalizeEmail(value) {
+      return (value || "").trim().toLowerCase();
+    }
+
     function isoNow() {
       return new Date().toISOString();
     }
@@ -207,6 +211,7 @@
 
     const SESSION_ID = getQueryParam("session_id", "");
     const STUDY_NUMBER = getQueryParam("study_number", "");
+    const STUDENT_EMAIL = normalizeEmail(getQueryParam("student_email", ""));
     const INTERACTION_MODE = getQueryParam("interaction_mode", "");
     const STUDY_GROUP = getQueryParam("study_group", "customized");
     const AGE_GROUP = getQueryParam("age_group", "Infant");
@@ -295,6 +300,7 @@
 
         const payload = {
           session_id: SESSION_ID,
+          student_email: STUDENT_EMAIL || null,
           study_number: STUDY_NUMBER || null,
           study_group: STUDY_GROUP || null,
           interaction_mode: INTERACTION_MODE || "Realtime voice",
@@ -666,6 +672,7 @@
           case_data_json: CASE_DATA_JSON,
           session_id: SESSION_ID,
           study_number: STUDY_NUMBER,
+          student_email: STUDENT_EMAIL,
           interaction_mode: INTERACTION_MODE,
           study_group: STUDY_GROUP
         }).toString();
