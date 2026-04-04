@@ -40,6 +40,13 @@ def safe_session_id(session_id: str) -> str:
     return "".join(c for c in str(session_id).strip() if c.isalnum() or c in "-_")
 
 
+def normalize_email(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = str(value).strip().lower()
+    return cleaned or None
+
+
 def parse_iso_datetime(value: Optional[str]):
     if not value:
         return None
@@ -95,6 +102,7 @@ def build_customized_instructions(
     household_structure: str,
     school_or_daycare: str,
     study_number: str,
+    student_email: str,
     interaction_mode: str,
     session_id: str,
     case_data_json: str,
@@ -114,6 +122,7 @@ The learner has selected:
 
 Session metadata:
 - Study number: {study_number or "Not provided"}
+- Student email: {student_email or "Not provided"}
 - Interaction mode: {interaction_mode or "Not provided"}
 - Session ID: {session_id or "Not provided"}
 - Case data JSON present: {"yes" if case_data_json else "no"}
@@ -304,6 +313,7 @@ def build_non_customized_instructions(
     household_structure: str,
     school_or_daycare: str,
     study_number: str,
+    student_email: str,
     interaction_mode: str,
     session_id: str,
 ) -> str:
@@ -319,6 +329,7 @@ The learner has selected:
 
 Session metadata:
 - Study number: {study_number or "Not provided"}
+- Student email: {student_email or "Not provided"}
 - Interaction mode: {interaction_mode or "Not provided"}
 - Session ID: {session_id or "Not provided"}
 
@@ -416,6 +427,7 @@ async def save_transcript(request: Request):
 
         transcript_payload = {
             "session_id": safe_id,
+            "student_email": normalize_email(body.get("student_email")),
             "study_number": body.get("study_number"),
             "study_group": body.get("study_group"),
             "interaction_mode": body.get("interaction_mode"),
@@ -507,6 +519,7 @@ async def create_session(request: Request):
         school_or_daycare = request.query_params.get("school_or_daycare", "").strip()
 
         study_number = request.query_params.get("study_number", "").strip()
+        student_email = normalize_email(request.query_params.get("student_email", ""))
         interaction_mode = request.query_params.get("interaction_mode", "").strip()
         session_id = request.query_params.get("session_id", "").strip()
         case_data_json = request.query_params.get("case_data_json", "").strip()
@@ -520,7 +533,7 @@ async def create_session(request: Request):
                 caregiver_occupation, child_name, child_age, child_sex,
                 presenting_complaint, case_summary, opening_line, siblings,
                 residence, birth_place, household_structure, school_or_daycare,
-                study_number, interaction_mode, session_id
+                study_number, student_email or "", interaction_mode, session_id
             )
         else:
             instructions = build_customized_instructions(
@@ -528,7 +541,7 @@ async def create_session(request: Request):
                 caregiver_occupation, child_name, child_age, child_sex,
                 presenting_complaint, case_summary, opening_line, siblings,
                 residence, birth_place, household_structure, school_or_daycare,
-                study_number, interaction_mode, session_id, case_data_json
+                study_number, student_email or "", interaction_mode, session_id, case_data_json
             )
 
         session_config = {
