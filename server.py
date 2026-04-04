@@ -238,6 +238,10 @@ General caregiver rules:
   "Can you explain what exactly you want to know?"
 - Do not repeatedly ask "what else do you want to know?"
 - If something is truly unknown in the case, say so naturally.
+- Never give two different answers to the same question.
+- Never restart an answer midway through and then change it.
+- Never produce more than one answer for a single learner turn.
+- If you have already answered a question, stay consistent with your earlier answer.
 
 Management-focus protection:
 - Do not steer the encounter toward management.
@@ -247,6 +251,8 @@ Turn-taking rules:
 - If the learner's utterance sounds incomplete, partial, cut off, or interrupted, wait.
 - Do not respond to a partial sentence.
 - Prefer waiting over interrupting.
+- Speak only once per turn.
+- Keep each reply short enough for natural spoken dialogue.
 
 End-of-history rule:
 - If the learner clearly indicates they are finished with the history, respond ONLY with:
@@ -383,6 +389,11 @@ RULES:
 - If the learner's utterance sounds incomplete, partial, cut off, or interrupted, wait.
 - There is no preceptor stage in this conversation.
 - Remain the caregiver throughout.
+- Never give two different answers to the same question.
+- Never restart an answer midway through and then change it.
+- Never produce more than one answer for a single learner turn.
+- Speak only once per turn.
+- Keep each reply short enough for natural spoken dialogue.
 """.strip()
 
 
@@ -449,7 +460,7 @@ async def save_transcript(request: Request):
             "household_structure": body.get("household_structure"),
             "school_or_daycare": body.get("school_or_daycare"),
             "case_data_json": body.get("case_data_json"),
-            "started_at": started_at,
+            "started_at": body.get("started_at"),
             "ended_at": ended_at,
             "duration_seconds": duration_seconds,
             "session_completed": body.get("session_completed", False),
@@ -529,19 +540,52 @@ async def create_session(request: Request):
 
         if study_group == NON_CUSTOMIZED_GROUP:
             instructions = build_non_customized_instructions(
-                age_group, system, caregiver_name, caregiver_gender, caregiver_role,
-                caregiver_occupation, child_name, child_age, child_sex,
-                presenting_complaint, case_summary, opening_line, siblings,
-                residence, birth_place, household_structure, school_or_daycare,
-                study_number, student_email or "", interaction_mode, session_id
+                age_group,
+                system,
+                caregiver_name,
+                caregiver_gender,
+                caregiver_role,
+                caregiver_occupation,
+                child_name,
+                child_age,
+                child_sex,
+                presenting_complaint,
+                case_summary,
+                opening_line,
+                siblings,
+                residence,
+                birth_place,
+                household_structure,
+                school_or_daycare,
+                study_number,
+                student_email or "",
+                interaction_mode,
+                session_id,
             )
         else:
             instructions = build_customized_instructions(
-                age_group, system, caregiver_name, caregiver_gender, caregiver_role,
-                caregiver_occupation, child_name, child_age, child_sex,
-                presenting_complaint, case_summary, opening_line, siblings,
-                residence, birth_place, household_structure, school_or_daycare,
-                study_number, student_email or "", interaction_mode, session_id, case_data_json
+                age_group,
+                system,
+                caregiver_name,
+                caregiver_gender,
+                caregiver_role,
+                caregiver_occupation,
+                child_name,
+                child_age,
+                child_sex,
+                presenting_complaint,
+                case_summary,
+                opening_line,
+                siblings,
+                residence,
+                birth_place,
+                household_structure,
+                school_or_daycare,
+                study_number,
+                student_email or "",
+                interaction_mode,
+                session_id,
+                case_data_json,
             )
 
         session_config = {
@@ -556,11 +600,11 @@ async def create_session(request: Request):
                     },
                     "turn_detection": {
                         "type": "server_vad",
-                        "threshold": 0.5,
-                        "prefix_padding_ms": 400,
-                        "silence_duration_ms": 1800,
+                        "threshold": 0.6,
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": 700,
                         "create_response": True,
-                        "interrupt_response": True,
+                        "interrupt_response": False,
                     },
                 },
                 "output": {
