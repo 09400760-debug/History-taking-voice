@@ -9,11 +9,19 @@ from typing import Optional
 
 app = FastAPI()
 
-OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"].strip()
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
+SUPABASE_SERVICE_KEY = (
+    os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    or os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
+    or os.environ.get("SUPABASE_KEY", "").strip()
+)
+SUPABASE_TRANSCRIPTS_TABLE = os.environ.get("SUPABASE_TRANSCRIPTS_TABLE", "history_voice_transcripts").strip() or "history_voice_transcripts"
 
 BASE_DIR = Path(__file__).resolve().parent
 INDEX_HTML_PATH = BASE_DIR / "templates" / "index.html"
 
+# Local fallback only. Do not rely on this for durable study data.
 TRANSCRIPTS_DIR = BASE_DIR / "transcripts"
 TRANSCRIPTS_DIR.mkdir(exist_ok=True)
 
@@ -32,6 +40,9 @@ CUSTOMIZED_GROUP = "customized"
 NON_CUSTOMIZED_GROUP = "non_customized"
 
 
+# =========================
+# Helpers
+# =========================
 def now_iso_utc() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -83,6 +94,72 @@ def choose_voice(caregiver_gender: str, caregiver_role: str) -> str:
     return FEMALE_VOICE
 
 
+def bool_env_ready() -> bool:
+    return bool(SUPABASE_URL and SUPABASE_SERVICE_KEY and SUPABASE_TRANSCRIPTS_TABLE)
+
+
+async def save_payload_to_supabase(transcript_payload: dict) -> tuple[bool, str]:
+    if not bool_env_ready():
+        return False, (
+            "Supabase env vars missing. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY "
+            "(or SUPABASE_SERVICE_KEY) on Render."
+        )
+
+    row = {
+        "session_id": transcript_payload.get("session_id"),
+        "student_email": transcript_payload.get("student_email"),
+        "study_number": transcript_payload.get("study_number"),
+        "study_group": transcript_payload.get("study_group"),
+        "interaction_mode": transcript_payload.get("interaction_mode"),
+        "age_group": transcript_payload.get("age_group"),
+        "system": transcript_payload.get("system"),
+        "caregiver_name": transcript_payload.get("caregiver_name"),
+        "caregiver_gender": transcript_payload.get("caregiver_gender"),
+        "caregiver_role": transcript_payload.get("caregiver_role"),
+        "caregiver_occupation": transcript_payload.get("caregiver_occupation"),
+        "child_name": transcript_payload.get("child_name"),
+        "child_age": transcript_payload.get("child_age"),
+        "child_sex": transcript_payload.get("child_sex"),
+        "presenting_complaint": transcript_payload.get("presenting_complaint"),
+        "case_summary": transcript_payload.get("case_summary"),
+        "opening_line": transcript_payload.get("opening_line"),
+        "siblings": transcript_payload.get("siblings"),
+        "residence": transcript_payload.get("residence"),
+        "birth_place": transcript_payload.get("birth_place"),
+        "household_structure": transcript_payload.get("household_structure"),
+        "school_or_daycare": transcript_payload.get("school_or_daycare"),
+        "case_data_json": transcript_payload.get("case_data_json"),
+        "started_at": transcript_payload.get("started_at"),
+        "ended_at": transcript_payload.get("ended_at"),
+        "duration_seconds": transcript_payload.get("duration_seconds"),
+        "session_completed": transcript_payload.get("session_completed", False),
+        "timeout_reason": transcript_payload.get("timeout_reason"),
+        "transcript_lines": transcript_payload.get("transcript_lines", []),
+        "transcript_text": transcript_payload.get("transcript_text", ""),
+        "saved_at": transcript_payload.get("saved_at"),
+        "payload": transcript_payload,
+    }
+
+    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{SUPABASE_TRANSCRIPTS_TABLE}"
+    headers = {
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=representation",
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(url, headers=headers, content=json.dumps([row], default=str))
+
+    if 200 <= response.status_code < 300:
+        return True, "ok"
+
+    return False, f"Supabase error {response.status_code}: {response.text}"
+
+
+# =========================
+# Prompt builders
+# =========================
 def build_customized_instructions(
     age_group: str,
     system: str,
@@ -410,6 +487,9 @@ RULES:
 """.strip()
 
 
+# =========================
+# Routes
+# =========================
 @app.get("/", response_class=HTMLResponse)
 async def home():
     try:
@@ -473,7 +553,7 @@ async def save_transcript(request: Request):
             "household_structure": body.get("household_structure"),
             "school_or_daycare": body.get("school_or_daycare"),
             "case_data_json": body.get("case_data_json"),
-            "started_at": body.get("started_at"),
+            "started_at": started_at,
             "ended_at": ended_at,
             "duration_seconds": duration_seconds,
             "session_completed": body.get("session_completed", False),
@@ -483,10 +563,45 @@ async def save_transcript(request: Request):
             "saved_at": now_iso_utc(),
         }
 
-        with open(transcript_file, "w", encoding="utf-8") as f:
-            json.dump(transcript_payload, f, ensure_ascii=False, indent=2)
+        # Durable save first
+        supabase_ok, supabase_message = await save_payload_to_supabase(transcript_payload)
 
-        return JSONResponse({"status": "ok", "session_id": safe_id, "file": str(transcript_file)})
+        # Optional local fallback for debugging / manual recovery
+        local_saved = False
+        local_error = None
+        try:
+            with open(transcript_file, "w", encoding="utf-8") as f:
+                json.dump(transcript_payload, f, ensure_ascii=False, indent=2)
+            local_saved = True
+        except Exception as e:
+            local_error = str(e)
+            print(f"Local transcript save error: {e}")
+
+        if supabase_ok:
+            return JSONResponse(
+                {
+                    "status": "ok",
+                    "session_id": safe_id,
+                    "saved_to_supabase": True,
+                    "saved_to_local": local_saved,
+                    "local_file": str(transcript_file) if local_saved else None,
+                    "supabase_table": SUPABASE_TRANSCRIPTS_TABLE,
+                }
+            )
+
+        # If Supabase failed, still return the local fallback result but clearly mark it
+        return JSONResponse(
+            {
+                "status": "warning",
+                "session_id": safe_id,
+                "saved_to_supabase": False,
+                "supabase_error": supabase_message,
+                "saved_to_local": local_saved,
+                "local_file": str(transcript_file) if local_saved else None,
+                "local_error": local_error,
+            },
+            status_code=207 if local_saved else 500,
+        )
 
     except Exception as e:
         print(f"save_transcript error: {e}")
@@ -500,8 +615,31 @@ async def latest_transcript(session_id: Optional[str] = None):
             return JSONResponse({"status": "error", "message": "session_id is required"}, status_code=400)
 
         safe_id = safe_session_id(session_id)
-        transcript_file = TRANSCRIPTS_DIR / f"transcript_{safe_id}.json"
 
+        # Prefer Supabase first
+        if bool_env_ready():
+            url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{SUPABASE_TRANSCRIPTS_TABLE}"
+            headers = {
+                "apikey": SUPABASE_SERVICE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                "Accept": "application/json",
+            }
+            params = {
+                "select": "payload",
+                "session_id": f"eq.{safe_id}",
+                "limit": "1",
+            }
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.get(url, headers=headers, params=params)
+
+            if 200 <= response.status_code < 300:
+                rows = response.json()
+                if rows:
+                    payload = rows[0].get("payload") or {}
+                    return JSONResponse({"status": "ok", "data": payload})
+
+        # Local fallback
+        transcript_file = TRANSCRIPTS_DIR / f"transcript_{safe_id}.json"
         if not transcript_file.exists():
             return JSONResponse({"status": "missing"}, status_code=404)
 
@@ -533,8 +671,8 @@ async def create_session(request: Request):
         case_summary = request.query_params.get("case_summary", "").strip()
         opening_line = request.query_params.get(
             "opening_line",
-            f"Hello doctor, I'm {caregiver_name}, {child_name}'s {caregiver_role}.",
-        ).strip() or f"Hello doctor, I'm {caregiver_name}, {child_name}'s {caregiver_role}."
+            f"Hello doctor, I'm {caregiver_name}, {child_name}'s {caregiver_role}. This is {child_name}, my {child_age} old {'son' if child_sex == 'male' else 'daughter'}.",
+        ).strip() or f"Hello doctor, I'm {caregiver_name}, {child_name}'s {caregiver_role}. This is {child_name}, my {child_age} old {'son' if child_sex == 'male' else 'daughter'}."
 
         siblings = request.query_params.get("siblings", "").strip()
         residence = request.query_params.get("residence", "").strip()
@@ -613,11 +751,11 @@ async def create_session(request: Request):
                     },
                     "turn_detection": {
                         "type": "server_vad",
-                        "threshold": 0.55,
-                        "prefix_padding_ms": 300,
-                        "silence_duration_ms": 900,
+                        "threshold": 0.5,
+                        "prefix_padding_ms": 200,
+                        "silence_duration_ms": 500,
                         "create_response": True,
-                        "interrupt_response": False,
+                        "interrupt_response": True,
                     },
                 },
                 "output": {
@@ -655,4 +793,5 @@ async def create_session(request: Request):
             media_type="text/plain",
             status_code=500,
         )
+
 
