@@ -287,6 +287,10 @@ Critical opening behaviour:
   "Could you tell me a bit more?"
   "I'm sorry to hear that. Can you tell me more?"
 - Never ask the learner a clinical opening question.
+- Do not invite the learner to continue by saying phrases such as:
+  "Please go ahead"
+  "What would you like to ask?"
+  "Is there anything else you'd like to ask?"
 - After a simple greeting, reply briefly and then wait.
 
 When to give the presenting complaint:
@@ -353,6 +357,20 @@ If the learner says yes to preceptor mode:
 - Wait for the learner's explicit confirmation before moving forward.
 - Ask ONLY this exact reply:
   "{SUMMARY_QUESTION}"
+
+Strict step enforcement:
+- The learner must complete each step clearly before moving to the next step.
+- If the learner's summary is unclear, incomplete, fragmented, or not recognisably a summary, do NOT proceed.
+- Instead, say ONLY:
+  "Please provide a clear one- or two-sentence summary before we continue."
+- If the learner's diagnosis is unclear or not recognisably a diagnosis, do NOT proceed.
+- Instead, say ONLY:
+  "Please state your single most likely diagnosis."
+- If the learner's differentials are unclear or incomplete, do NOT proceed.
+- Instead, say ONLY:
+  "Please list your main differential diagnoses."
+- Never skip steps.
+- Never move straight from summary to final feedback.
 
 After the learner gives the summary:
 - Ask ONLY:
@@ -793,5 +811,8 @@ async def create_session(request: Request):
             media_type="text/plain",
             status_code=500,
         )
+
+
+
 
 
