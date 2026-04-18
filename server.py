@@ -16,7 +16,10 @@ SUPABASE_SERVICE_KEY = (
     or os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
     or os.environ.get("SUPABASE_KEY", "").strip()
 )
-SUPABASE_TRANSCRIPTS_TABLE = os.environ.get("SUPABASE_TRANSCRIPTS_TABLE", "history_voice_transcripts").strip() or "history_voice_transcripts"
+SUPABASE_TRANSCRIPTS_TABLE = (
+    os.environ.get("SUPABASE_TRANSCRIPTS_TABLE", "history_voice_transcripts").strip()
+    or "history_voice_transcripts"
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 INDEX_HTML_PATH = BASE_DIR / "templates" / "index.html"
@@ -98,6 +101,19 @@ def bool_env_ready() -> bool:
     return bool(SUPABASE_URL and SUPABASE_SERVICE_KEY and SUPABASE_TRANSCRIPTS_TABLE)
 
 
+def default_other_caregiver_role(primary_role: str) -> str:
+    role = str(primary_role or "").strip().lower()
+    mapping = {
+        "mother": "father",
+        "father": "mother",
+        "grandmother": "mother",
+        "grandfather": "father",
+        "aunt": "mother",
+        "uncle": "father",
+    }
+    return mapping.get(role, "parent")
+
+
 async def save_payload_to_supabase(transcript_payload: dict) -> tuple[bool, str]:
     if not bool_env_ready():
         return False, (
@@ -117,6 +133,8 @@ async def save_payload_to_supabase(transcript_payload: dict) -> tuple[bool, str]
         "caregiver_gender": transcript_payload.get("caregiver_gender"),
         "caregiver_role": transcript_payload.get("caregiver_role"),
         "caregiver_occupation": transcript_payload.get("caregiver_occupation"),
+        "other_caregiver_name": transcript_payload.get("other_caregiver_name"),
+        "other_caregiver_role": transcript_payload.get("other_caregiver_role"),
         "child_name": transcript_payload.get("child_name"),
         "child_age": transcript_payload.get("child_age"),
         "child_sex": transcript_payload.get("child_sex"),
@@ -167,6 +185,8 @@ def build_customized_instructions(
     caregiver_gender: str,
     caregiver_role: str,
     caregiver_occupation: str,
+    other_caregiver_name: str,
+    other_caregiver_role: str,
     child_name: str,
     child_age: str,
     child_sex: str,
@@ -184,6 +204,12 @@ def build_customized_instructions(
     session_id: str,
     case_data_json: str,
 ) -> str:
+    other_caregiver_line = (
+        f'- The other caregiver is "{other_caregiver_name}", who is the child\'s {other_caregiver_role}.'
+        if other_caregiver_name else
+        "- If asked about the other caregiver, answer naturally and consistently as an ordinary caregiver would."
+    )
+
     return f"""
 You are simulating a realistic paediatric history-taking station for a medical student in South Africa.
 
@@ -236,6 +262,7 @@ CORE IDENTITY:
 - Your role is "{caregiver_role}".
 - Your child's name is "{child_name}".
 - Your child is "{child_age}" old.
+{other_caregiver_line}
 - Never confuse your own name with the child's name.
 - Never use the learner's name as your own.
 - If the learner gets your name or your child's name wrong, say only:
@@ -263,6 +290,7 @@ VERY IMPORTANT ROLE RULES:
   "Let me know."
   "We can explore that further."
   "What would you like to ask?"
+  "What would you like to know about her current situation?"
 - Never ask the learner doctor-style follow-up questions.
 - Never ask about symptoms, duration, severity, progression, red flags, or systems.
 - Never take control of the interview.
@@ -310,16 +338,13 @@ ANSWERING STYLE:
 
 FAMILY AND SOCIAL FACTS:
 - You should know obvious everyday facts about your child and household.
-- If asked about siblings, who lives at home, where you live, where the child was born, school/daycare, or your occupation, answer directly using the known facts above.
+- If asked about siblings, who lives at home, where you live, where the child was born, school/daycare, your occupation, or the other caregiver, answer directly using the known facts above.
 - Do not act confused about ordinary family facts.
-- If a basic everyday fact is not explicitly provided above, answer briefly and naturally without being meta.
 - Never say:
   "I haven't mentioned that because I wasn't asked before."
   "That is not something I mentioned before."
   "I do not have that detail right now."
-- If you truly do not want to provide a non-clinical personal detail, say something short and natural, for example:
-  "I'd rather not go into that right now."
-- Do not explain your prompting or your memory.
+- If a non-essential personal detail is not explicitly provided, answer briefly and naturally without sounding meta.
 
 CONSISTENCY RULES:
 - Keep all answers consistent with the hidden clinical picture and the known family/background facts above.
@@ -411,6 +436,8 @@ def build_non_customized_instructions(
     caregiver_gender: str,
     caregiver_role: str,
     caregiver_occupation: str,
+    other_caregiver_name: str,
+    other_caregiver_role: str,
     child_name: str,
     child_age: str,
     child_sex: str,
@@ -427,6 +454,12 @@ def build_non_customized_instructions(
     interaction_mode: str,
     session_id: str,
 ) -> str:
+    other_caregiver_line = (
+        f'- The other caregiver is "{other_caregiver_name}", who is the child\'s {other_caregiver_role}.'
+        if other_caregiver_name else
+        "- If asked about the other caregiver, answer naturally and consistently as an ordinary caregiver would."
+    )
+
     return f"""
 You are role-playing a realistic caregiver in a paediatric history-taking conversation with a medical student.
 
@@ -457,6 +490,7 @@ Known caregiver and child details:
 - Birth place: {birth_place or "Not specified"}
 - Household structure: {household_structure or "Not specified"}
 - School/daycare: {school_or_daycare or "Not specified"}
+{other_caregiver_line}
 
 Hidden case summary:
 {case_summary}
@@ -482,6 +516,7 @@ RULES:
   "Let me know."
   "We can explore that further."
   "What would you like to ask?"
+  "What would you like to know about her current situation?"
 - Do not ask the learner any questions unless you are clarifying jargon or an unclear question.
 - Never ask structured, diagnostic, or doctor-style follow-up questions.
 - Do not coach, assess, score, or structure the interview.
@@ -566,6 +601,8 @@ async def save_transcript(request: Request):
             "caregiver_gender": body.get("caregiver_gender"),
             "caregiver_role": body.get("caregiver_role"),
             "caregiver_occupation": body.get("caregiver_occupation"),
+            "other_caregiver_name": body.get("other_caregiver_name"),
+            "other_caregiver_role": body.get("other_caregiver_role"),
             "child_name": body.get("child_name"),
             "child_age": body.get("child_age"),
             "child_sex": body.get("child_sex"),
@@ -700,6 +737,9 @@ async def create_session(request: Request):
         household_structure = request.query_params.get("household_structure", "").strip()
         school_or_daycare = request.query_params.get("school_or_daycare", "").strip()
 
+        other_caregiver_name = request.query_params.get("other_caregiver_name", "").strip()
+        other_caregiver_role = request.query_params.get("other_caregiver_role", "").strip() or default_other_caregiver_role(caregiver_role)
+
         study_number = request.query_params.get("study_number", "").strip()
         student_email = normalize_email(request.query_params.get("student_email", ""))
         interaction_mode = request.query_params.get("interaction_mode", "").strip()
@@ -717,6 +757,8 @@ async def create_session(request: Request):
                 caregiver_gender,
                 caregiver_role,
                 caregiver_occupation,
+                other_caregiver_name,
+                other_caregiver_role,
                 child_name,
                 child_age,
                 child_sex,
@@ -741,6 +783,8 @@ async def create_session(request: Request):
                 caregiver_gender,
                 caregiver_role,
                 caregiver_occupation,
+                other_caregiver_name,
+                other_caregiver_role,
                 child_name,
                 child_age,
                 child_sex,
@@ -771,9 +815,9 @@ async def create_session(request: Request):
                     },
                     "turn_detection": {
                         "type": "server_vad",
-                        "threshold": 0.5,
-                        "prefix_padding_ms": 400,
-                        "silence_duration_ms": 700,
+                        "threshold": 0.45,
+                        "prefix_padding_ms": 500,
+                        "silence_duration_ms": 900,
                         "create_response": True,
                         "interrupt_response": True,
                     },
