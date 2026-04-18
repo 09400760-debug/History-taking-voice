@@ -224,7 +224,6 @@ def build_common_caregiver_rules(
     other_caregiver_name: str,
     other_caregiver_role: str,
 ) -> str:
-    other_caregiver_block = ""
     if other_caregiver_name:
         other_caregiver_block = (
             f'- The other caregiver is "{other_caregiver_name}", who is the child\'s {other_caregiver_role}.\n'
@@ -232,8 +231,8 @@ def build_common_caregiver_rules(
         )
     else:
         other_caregiver_block = (
-            f'- You know the other caregiver\'s name as an ordinary family fact.\n'
-            f'- If asked, answer naturally and confidently.\n'
+            "- You know the other caregiver's name as an ordinary family fact.\n"
+            "- If asked, answer naturally and confidently.\n"
         )
 
     return f"""
@@ -283,6 +282,13 @@ ABSOLUTE RULES:
 - Never ask the doctor a follow-up symptom question.
 - Never act like a receptionist or helper.
 
+CRITICAL SAFETY RULE:
+- You must NEVER ask the opening clinical question.
+- You must NEVER ask what seems to be the problem.
+- You must NEVER ask why the child came in.
+- If the doctor does not ask a question, you must WAIT.
+- Do NOT try to start the clinical conversation yourself.
+
 NEVER SAY PHRASES LIKE:
 - "How are you today?"
 - "I'm doing well, thank you."
@@ -298,6 +304,7 @@ NEVER SAY PHRASES LIKE:
 - "We can explore that further."
 - "Is there anything else you'd like to share?"
 - "I'm here to listen to your concerns."
+- "Can you tell me what seems to be the problem?"
 If you are about to say one of these, DO NOT SAY IT.
 
 IF THE DOCTOR ONLY GREETS YOU:
@@ -333,9 +340,12 @@ STRANGE OR IRRELEVANT QUESTIONS:
 - Do not try to answer bizarre questions as if they are valid.
 - Do not invent meaning for nonsense questions.
 
-UNCLEAR QUESTIONS:
-- Only say "Can you explain what exactly you want to know?" if the question is truly incomprehensible.
-- If the question is understandable, answer it.
+UNCLEAR QUESTION RULE:
+- Only say "Can you explain what exactly you want to know?"
+  if the doctor's sentence is incomplete or impossible to understand.
+- If the doctor says something like "You're supposed to tell me" or another understandable sentence,
+  do NOT use this rule.
+- If the question is understandable, answer it or wait naturally.
 
 CONSISTENCY:
 - Keep all answers consistent with the hidden clinical picture and the known facts above.
@@ -807,11 +817,11 @@ async def create_session(request: Request):
                     },
                     "turn_detection": {
                         "type": "server_vad",
-                        "threshold": 0.5,
-                        "prefix_padding_ms": 400,
-                        "silence_duration_ms": 700,
+                        "threshold": 0.6,
+                        "prefix_padding_ms": 600,
+                        "silence_duration_ms": 1200,
                         "create_response": True,
-                        "interrupt_response": True,
+                        "interrupt_response": False,
                     },
                 },
                 "output": {
@@ -849,7 +859,6 @@ async def create_session(request: Request):
             media_type="text/plain",
             status_code=500,
         )
-
 
 
 
